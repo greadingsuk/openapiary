@@ -60,8 +60,6 @@ inline size_t bthome_build_payload(uint8_t* out, size_t outCap,
 
 // Fill `out` with "OA-XXXX" where XXXX = last 4 hex chars of the BLE MAC.
 inline void bthome_local_name(char* out, size_t outCap) {
-    extern uint32_t NRF_FICR_DEVICEADDR_low_helper();  // see main.cpp for impl, or use Bluefruit
-    // Pragmatic fallback: read from NRF_FICR
     uint32_t lo = NRF_FICR->DEVICEADDR[0];
     snprintf(out, outCap, "OA-%04X", (unsigned)(lo & 0xFFFF));
 }

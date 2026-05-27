@@ -28,6 +28,9 @@ static float    g_calFactor = -26913.0f;  // initial default from v4 BOM
 static int32_t  g_tareOffset = 0;
 static uint8_t  g_packetId = 0;           // monotonic counter, persisted across reboots
 
+// Forward decls
+float readBatteryVoltage();
+
 void setup() {
     // TODO: detect VBUS or Hall sensor -> enter calibration CLI mode (see cal_mode.cpp)
 
@@ -49,9 +52,13 @@ void loop() {
     float batteryV = readBatteryVoltage();
 
     // 3. Build BTHome v2 service-data payload
-    uint8_t payload[16];
-    size_t  payloadLen = bthome_build_payload(
-        payload, sizeof(payload),
+    // Service-data AD type (0x16) must start with the 16-bit UUID in little-endian,
+    // followed by the BTHome payload bytes.
+    uint8_t svcData[2 + 16];
+    svcData[0] = (uint8_t)(BTHOME_SERVICE_UUID_16 & 0xFF);
+    svcData[1] = (uint8_t)(BTHOME_SERVICE_UUID_16 >> 8);
+    size_t payloadLen = bthome_build_payload(
+        svcData + 2, sizeof(svcData) - 2,
         ++g_packetId,
         weightKg,
         batteryV,
@@ -60,15 +67,16 @@ void loop() {
     (void)spread_g;  // TODO: include in custom slot once decided
 
     // 4. Advertise for 300 ms
-    Bluefruit.Advertising.clearData();
-    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_GENERAL_DISC_MODE);
-    Bluefruit.Advertising.addService(BTHOME_SERVICE_UUID_16);
-    Bluefruit.Advertising.addData(BLE_GAP_AD_TYPE_SERVICE_DATA, payload, payloadLen);
-    // Scan response: friendly name "OA-XXXX"
+    // Friendly name "OA-XXXX" must be set BEFORE addName().
     char name[12];
     bthome_local_name(name, sizeof(name));
-    Bluefruit.ScanResponse.addName();
     Bluefruit.setName(name);
+
+    Bluefruit.Advertising.clearData();
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addData(BLE_GAP_AD_TYPE_SERVICE_DATA,
+                                  svcData, (uint8_t)(2 + payloadLen));
+    Bluefruit.ScanResponse.addName();
     Bluefruit.Advertising.start(0);
     delay(ADVERT_DURATION_MS);
     Bluefruit.Advertising.stop();
