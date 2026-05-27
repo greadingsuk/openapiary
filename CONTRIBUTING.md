@@ -7,7 +7,8 @@ contributions of any size.
 
 - **No secrets in commits.** No API keys, tokens, customer names, MAC addresses
   tied to real users, or photos with identifiable plate / location data.
-- **MIT licensed.** By contributing you agree your contributions are MIT.
+- **PolyForm Noncommercial 1.0.0.** By contributing you agree your contributions
+  are released under the project's [LICENSE](LICENSE) (non-commercial use only).
 - **Keep it open.** Avoid pulling in proprietary SDKs or cloud-only services
   on the device side.
 

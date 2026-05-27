@@ -34,4 +34,7 @@ Phase 1 scaffold. Not yet flashed to hardware. See [`docs/migration-plan.md` §8
 
 ## Licence
 
-MIT — see [`LICENSE`](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify and share for
+non-commercial purposes (personal projects, research, education, charities,
+government). Commercial use requires a separate licence — contact the
+author.

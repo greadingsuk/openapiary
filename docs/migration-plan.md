@@ -27,7 +27,7 @@ The device becomes a **dumb, autonomous, BLE-broadcasting scale**. The phone bec
 | Auth | JWT + Logic App + Power Automate write proxy | Single shared API key per app install |
 | App | Vanilla JS + Vite (web only) | **Ionic React + Capacitor** (mobile, BLE-capable) |
 | OTA | Public GitHub repo + HTTPS download | USB / nRF DFU only (no OTA needed) |
-| Licence | Private | **MIT, public** |
+| Licence | Private | **PolyForm Noncommercial 1.0.0, public** |
 | Home Assistant | Custom integration required | **Auto-discovered** via BTHome standard |
 
 ---
@@ -46,9 +46,10 @@ cd .\OpenApiary
 gh repo create greadingsuk/openapiary `
   --public `
   --description "Open-source BLE beehive scale (XIAO nRF52840 + BTHome) with Capacitor app and Cloudflare backend" `
-  --license mit `
   --gitignore Node `
   --clone
+# Licence: PolyForm Noncommercial 1.0.0 (LICENSE file committed manually —
+# gh repo create does not offer a PolyForm template).
 
 # After clone, all subsequent paths are inside .\openapiary\
 cd .\openapiary
@@ -396,7 +397,7 @@ A Cloudflare Pages site that consumes the same Worker. Reuse the v4 dashboard's 
 ```
 openapiary/
 ├── README.md                 # quickstart, what it is, link to bthome.io
-├── LICENSE                   # MIT (set at gh repo create)
+├── LICENSE                   # PolyForm Noncommercial 1.0.0
 ├── CONTRIBUTING.md           # how to flash, how to PR, code of conduct link
 ├── docs/
 │   ├── migration-plan.md     # this file
