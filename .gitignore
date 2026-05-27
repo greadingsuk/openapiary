@@ -141,3 +141,25 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# --- OpenApiary additions ---
+
+# PlatformIO
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+firmware/.vscode/
+
+# Capacitor / iOS / Android build outputs
+app/ios/
+app/android/
+app/.capacitor/
+
+# Wrangler
+cloud/api/.wrangler/
+cloud/api/.dev.vars
+cloud/api/.mf/
+
+# OS junk
+Thumbs.db
+.DS_Store

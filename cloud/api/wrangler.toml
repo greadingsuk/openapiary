@@ -1,0 +1,13 @@
+name = "openapiary-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# Fill in after running `npx wrangler d1 create openapiary`:
+#   [[d1_databases]]
+#   binding = "DB"
+#   database_name = "openapiary"
+#   database_id = "<paste-here>"
+
+# Secrets (set with `npx wrangler secret put <NAME>`):
+#   API_KEY       - shared key sent in X-API-Key header by the app
+#   API_KEY_SALT  - HMAC salt for header comparison (Phase 1 single-tenant)
