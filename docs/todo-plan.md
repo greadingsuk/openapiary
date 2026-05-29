@@ -1,11 +1,43 @@
 # OpenApiary — To-Do Plan
 
 > **Status**: Live working document. Supersedes the original `migration-plan.md`.
-> **Last updated**: 2026-05-27
+> **Last updated**: 2026-05-29
 > **Repo**: <https://github.com/greadingsuk/openapiary>
 > **Licence**: PolyForm Noncommercial 1.0.0
 
 Legend: ✅ done · 🟡 partial / stubbed · ⬜ not started · ⏭️ deferred (won't do in v1)
+
+---
+
+## 0. Architecture (source-of-truth model)
+
+OpenApiary follows the **Smartbot-style** model: the cloud is canonical, the phone is
+an offline cache + sync client. Devices never talk to the cloud directly.
+
+```
+XIAO scale  ──BLE advert──►  Phone (Ionic app)
+                              │
+                              ├─► Local SQLite (offline buffer; rows start synced=0)
+                              │
+                              └─► When online: POST /v1/readings
+                                           │
+                                           ▼
+                                  Cloudflare Worker (oa-api-*)
+                                           │
+                                           ▼
+                                  D1 database (oa-staging / oa-prod)  ◄── canonical store
+                                           │
+                                           ▼
+                                  Read back by any phone or web viewer
+```
+
+**Implications baked into the design:**
+
+- Every BLE advert the phone hears is written to local SQLite *immediately* with `synced=0`.
+- A row is only flipped to `synced=1` after a confirmed HTTP 200 from the Worker.
+- Long-range charts in the app read from the Worker (D1) when online; fall back to local cache offline.
+- Cloud is **mandatory infrastructure**, not optional. A phone wipe before sync = the last few unsynced rows lost; mitigated by aggressive auto-sync (see §5).
+- The device itself stays internet-free — BLE only. This keeps the firmware tiny and the power budget intact.
 
 ---
 
@@ -90,11 +122,13 @@ resource naming (`oa-` prefix) + per-env secrets. See [cloud/api/README.md](../c
 - ⬜ `npx cap add ios` / `npx cap add android`
 - ⬜ Copy v4 Tailwind tokens + hex motif into `app/tailwind.config.js`
 - ⬜ Port `hive-visual.js` → `<HiveVisual />` React component
-- ⬜ Local SQLite schema (`hives`, `readings`) per plan §5.5
+- ⬜ Local SQLite schema (`hives`, `readings`) per plan §5.5 — every row starts `synced=0`
 - ⬜ BTHome v2 service-data parser (mirror `firmware/src/bthome.h`)
 - ⬜ Screens: `HiveListPage`, `HiveDetailPage`, `AddHivePage`, `SettingsPage`, `CalibrationHelperPage`
 - ⬜ Foreground BLE scan while a hive screen is open (no background scan in v1)
-- ⬜ Manual "Sync now" + global "Sync all unsynced" → cloud `POST /v1/readings`
+- ⬜ **Auto-sync** — fire `POST /v1/readings` (a) on app foreground, (b) every 5 min while open, (c) immediately after any new BLE advert is stored. Only flip rows to `synced=1` on confirmed HTTP 200.
+- ⬜ **Manual "Sync now"** button (per-hive + global on Settings) for user-triggered flush
+- ⬜ **Read-back from cloud**: long-range charts (7d / 30d) `GET /v1/hives/:id/readings` when online; local-cache fallback offline
 - ⏭️ Background scanning, iOS push notifications — Phase 2
 
 ---
