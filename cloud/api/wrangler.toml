@@ -1,13 +1,53 @@
-name = "openapiary-api"
+# OpenApiary Worker config — isolated from any other project in the same Cloudflare account.
+#
+# Naming convention: every resource is prefixed `oa-` so it sorts together in the
+# dashboard and never collides with Smart Hive Scale or any other project.
+#
+# Account: shared with Smart Hive Scale (same Cloudflare account); isolation is
+# enforced by resource naming + per-resource secrets, not by separate accounts.
+
+name = "oa-api"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
-# Fill in after running `npx wrangler d1 create openapiary`:
-#   [[d1_databases]]
-#   binding = "DB"
-#   database_name = "openapiary"
-#   database_id = "<paste-here>"
+# Don't publish a *.workers.dev preview URL by default — we'll bind a custom
+# route or hostname instead. Set true temporarily during local debugging only.
+workers_dev = false
 
-# Secrets (set with `npx wrangler secret put <NAME>`):
+# Smart placement picks a region close to D1 automatically (free, recommended).
+[placement]
+mode = "smart"
+
+# Cheap built-in logs/metrics (free tier — 200k events/day).
+[observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Staging — the default `wrangler deploy` target while iterating.
+# Bind to:  oa-api-staging.<your-subdomain>.workers.dev (only if you set
+# workers_dev=true on this env) OR a custom route like api-staging.openapiary.dev
+# ---------------------------------------------------------------------------
+[env.staging]
+name = "oa-api-staging"
+workers_dev = false
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "oa-staging"
+database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+
+# Secrets (set with `npx wrangler secret put <NAME> --env staging`):
 #   API_KEY       - shared key sent in X-API-Key header by the app
 #   API_KEY_SALT  - HMAC salt for header comparison (Phase 1 single-tenant)
+
+# ---------------------------------------------------------------------------
+# Production — promoted to with `wrangler deploy --env production`.
+# ---------------------------------------------------------------------------
+[env.production]
+name = "oa-api-prod"
+workers_dev = false
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "oa-prod"
+database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"

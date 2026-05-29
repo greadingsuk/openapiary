@@ -57,14 +57,27 @@ Legend: ✅ done · 🟡 partial / stubbed · ⬜ not started · ⏭️ deferred
 
 ---
 
-## 4. Cloud (`cloud/api/`) — **stubs only, no deployment**
+## 4. Cloud (`cloud/api/`) — **framework ready, no deployment yet**
 
-- ✅ Hono Worker stub `src/index.ts` with `X-API-Key` (`timingSafeEqual`) auth
+Lives in the same Cloudflare account as Smart Hive Scale; isolation is by
+resource naming (`oa-` prefix) + per-env secrets. See [cloud/api/README.md](../cloud/api/README.md).
+
+### Framework
+- ✅ Hono Worker `src/index.ts` with `X-API-Key` (`timingSafeEqual`) auth
 - ✅ Endpoints: `POST /v1/readings`, `GET /v1/hives`, `GET /v1/hives/:id/readings`, `PATCH /v1/hives/:id`
 - ✅ D1 schema `migrations/0001.sql` with `UNIQUE(hive_id, packet_id, ts)` and `(hive_id, ts)` index
-- ⏭️ `wrangler d1 create openapiary` — deferred until app is ready to sync
-- ⏭️ `wrangler secret put API_KEY` / `API_KEY_SALT` — deferred
-- ⏭️ `wrangler deploy` — deferred
+- ✅ `wrangler.toml` with `[env.staging]` (`oa-api-staging` / `oa-staging`) and `[env.production]` (`oa-api-prod` / `oa-prod`); `workers_dev = false`; smart placement + observability on
+- ✅ `package.json` scripts: `dev`, `deploy:staging`, `deploy:prod`, `db:migrate:{local,staging,prod}`, `tail:{staging,prod}`
+- ✅ `cloud/api/README.md` bootstrap guide
+
+### Bootstrap (run when ready)
+- ⬜ `npm install` in `cloud/api/`
+- ⬜ `npx wrangler login` (one-time per machine)
+- ⬜ `npx wrangler d1 create oa-staging` + `oa-prod`; paste IDs into `wrangler.toml`
+- ⬜ `npm run db:migrate:staging` and `db:migrate:prod`
+- ⬜ `npx wrangler secret put API_KEY` / `API_KEY_SALT` for both envs
+- ⬜ `npm run deploy:staging` → smoke-test `GET /v1/hives`
+- ⏭️ `npm run deploy:prod` — once app is wired and staging proves clean
 - ⏭️ Public viewer on Cloudflare Pages — Phase 2
 
 ---
