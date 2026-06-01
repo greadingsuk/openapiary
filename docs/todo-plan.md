@@ -90,28 +90,35 @@ XIAO scale  ──BLE advert──►  Phone (Ionic app)
 
 ---
 
-## 4. Cloud (`cloud/api/`) — **framework ready, no deployment yet**
+## 4. Cloud (`cloud/api/`) — **deployed to staging + production (2026-06-01)**
 
 Lives in the same Cloudflare account as Smart Hive Scale; isolation is by
 resource naming (`oa-` prefix) + per-env secrets. See [cloud/api/README.md](../cloud/api/README.md).
+
+Account: `8e7dac970ca4f95a26333c1b17fb290e` (grantjreadings@gmail.com).
+Region: WEUR. D1 IDs: staging `f714bc51-dc22-4a76-9128-a81ba86acdd5`, prod `0b326164-7fcc-4328-860c-b5057a5a8f9c`.
+Secrets stored locally at `cloud/api/.secrets.local` (gitignored).
 
 ### Framework
 - ✅ Hono Worker `src/index.ts` with `X-API-Key` (`timingSafeEqual`) auth
 - ✅ Endpoints: `POST /v1/readings`, `GET /v1/hives`, `GET /v1/hives/:id/readings`, `PATCH /v1/hives/:id`
 - ✅ D1 schema `migrations/0001.sql` with `UNIQUE(hive_id, packet_id, ts)` and `(hive_id, ts)` index
-- ✅ `wrangler.toml` with `[env.staging]` (`oa-api-staging` / `oa-staging`) and `[env.production]` (`oa-api-prod` / `oa-prod`); `workers_dev = false`; smart placement + observability on
+- ✅ `wrangler.toml` with `[env.staging]` (`oa-api-staging` / `oa-staging`, `workers_dev = true` for now) and `[env.production]` (`oa-api-prod` / `oa-prod`, `workers_dev = false`); smart placement + observability on
 - ✅ `package.json` scripts: `dev`, `deploy:staging`, `deploy:prod`, `db:migrate:{local,staging,prod}`, `tail:{staging,prod}`
 - ✅ `cloud/api/README.md` bootstrap guide
 
-### Bootstrap (run when ready)
-- ⬜ `npm install` in `cloud/api/`
-- ⬜ `npx wrangler login` (one-time per machine)
-- ⬜ `npx wrangler d1 create oa-staging` + `oa-prod`; paste IDs into `wrangler.toml`
-- ⬜ `npm run db:migrate:staging` and `db:migrate:prod`
-- ⬜ `npx wrangler secret put API_KEY` / `API_KEY_SALT` for both envs
-- ⬜ `npm run deploy:staging` → smoke-test `GET /v1/hives`
-- ⏭️ `npm run deploy:prod` — once app is wired and staging proves clean
+### Bootstrap (done)
+- ✅ `npm install` in `cloud/api/` (wrangler bumped to v4)
+- ✅ `npx wrangler login` (OAuth)
+- ✅ `npx wrangler d1 create oa-staging` + `oa-prod`; IDs pasted into `wrangler.toml`
+- ✅ `npm run db:migrate:staging` and `db:migrate:prod`
+- ✅ `npx wrangler secret put API_KEY` / `API_KEY_SALT` for both envs
+- ✅ `npm run deploy:staging` → smoke-test pass: unauth 401, auth POST/GET round-trip ✓
+- ✅ `npm run deploy:prod` (script uploaded; no trigger yet — flip `workers_dev = true` or bind a custom route when needed)
+- ⏭️ Custom domain / route binding (e.g. `api.openapiary.dev`) — when domain registered
 - ⏭️ Public viewer on Cloudflare Pages — Phase 2
+
+Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 
 ---
 

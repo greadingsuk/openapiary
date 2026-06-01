@@ -29,12 +29,12 @@ enabled = true
 # ---------------------------------------------------------------------------
 [env.staging]
 name = "oa-api-staging"
-workers_dev = false
+workers_dev = true
 
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "oa-staging"
-database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+database_id   = "f714bc51-dc22-4a76-9128-a81ba86acdd5"
 
 # Secrets (set with `npx wrangler secret put <NAME> --env staging`):
 #   API_KEY       - shared key sent in X-API-Key header by the app
@@ -50,4 +50,4 @@ workers_dev = false
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "oa-prod"
-database_id   = "REPLACE_AFTER_WRANGLER_D1_CREATE"
+database_id   = "0b326164-7fcc-4328-860c-b5057a5a8f9c"

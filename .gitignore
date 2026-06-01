@@ -163,3 +163,5 @@ cloud/api/.mf/
 # OS junk
 Thumbs.db
 .DS_Store
+
+cloud/api/.secrets.local
