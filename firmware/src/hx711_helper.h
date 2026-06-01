@@ -59,3 +59,18 @@ inline float hx711_read_median(uint8_t samples) {
 }
 
 inline uint16_t hx711_last_spread_g() { return g_lastSpread_g; }
+
+// Raw helpers for calibration mode. Both wake the HX711, take an average of
+// `samples` raw counts (no scale/offset applied), then leave the chip powered
+// up so the caller can chain reads.
+inline long hx711_read_raw_average(uint8_t samples) {
+    g_hx.power_up();
+    delay(400);
+    if (samples == 0) samples = 10;
+    return g_hx.read_average(samples);
+}
+
+inline void  hx711_set_scale(float f)   { g_hx.set_scale(f); }
+inline void  hx711_set_offset(int32_t o){ g_hx.set_offset(o); }
+inline float hx711_get_scale()          { return g_hx.get_scale(); }
+inline int32_t hx711_get_offset()       { return g_hx.get_offset(); }

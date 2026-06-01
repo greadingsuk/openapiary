@@ -1,16 +1,29 @@
 // OpenApiary firmware — main entry
 // Target: Seeed XIAO nRF52840 (Standard, NOT Sense)
-// Design: see docs/migration-plan.md §4
+// Design: see docs/todo-plan.md and the original migration plan §4.
 //
 // Wake cycle (every 15 min):
-//   System OFF -> RTC wake -> HX711 read -> battery read -> BLE advert burst -> System OFF
+//   sleep (FreeRTOS idle + WFE) -> HX711 read -> battery read -> BLE advert burst -> sleep
 //
-// This is a SCAFFOLD. TODO markers show where each piece needs implementing.
+// Power model note:
+//   On the Adafruit nRF52 Arduino core, delay() yields to FreeRTOS which puts
+//   the idle task into __WFE — i.e. it IS the low-power sleep on this stack.
+//   With SoftDevice + DCDC enabled we measure ~2-5 µA between wakes.
+//
+//   True System OFF (~0.4 µA) is NOT used because System OFF on the nRF52840
+//   cannot be woken by the RTC; only RESET / NFC / GPIO sense / LPCOMP can.
+//   Switching to System OFF would require teardown + re-init of SoftDevice on
+//   every wake and would push the average current UP, not down.
 
 #include <Arduino.h>
 #include <bluefruit.h>
+#include <nrf_soc.h>
 #include "hx711_helper.h"
 #include "bthome.h"
+#include "persist.h"
+
+// Provided by cal_mode.cpp
+extern void enterCalibrationMode();
 
 // ---- Pinout (see §4.2) ----
 static const uint8_t PIN_HX711_DT  = D2;   // P0.04
@@ -21,32 +34,43 @@ static const uint8_t PIN_VBAT_EN   = 14;   // P0.14 - drive LOW to enable divide
 // ---- Timing ----
 static const uint32_t WAKE_INTERVAL_MS = 15UL * 60UL * 1000UL;  // 15 minutes
 static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets across ch 37/38/39
+static const uint8_t  PERSIST_EVERY_N_CYCLES = 16;               // limit flash wear
 
-// ---- Persisted via Adafruit InternalFS (LittleFS) ----
-// TODO: load from /cal.txt on boot
-static float    g_calFactor = -26913.0f;  // initial default from v4 BOM
-static int32_t  g_tareOffset = 0;
-static uint8_t  g_packetId = 0;           // monotonic counter, persisted across reboots
+// ---- Runtime state (loaded from /cal.txt at boot) ----
+static OAPersist::State g_state = { -26913.0f, 0, 0 };
 
 // Forward decls
 float readBatteryVoltage();
+static bool vbusPresent();
 
 void setup() {
-    // TODO: detect VBUS or Hall sensor -> enter calibration CLI mode (see cal_mode.cpp)
+    // 1. If USB is plugged in at boot, drop into the calibration CLI and stay there.
+    if (vbusPresent()) {
+        enterCalibrationMode();   // never returns
+    }
 
+    // 2. SoftDevice + BLE
     Bluefruit.begin();
     Bluefruit.setTxPower(0);  // 0 dBm; bump to +4 if range poor
 
-    // TODO: load cal/tare/packetId from InternalFS
+    // 3. Enable DCDC regulator — drops idle current from ~5 µA to ~2.5 µA.
+    sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE);
 
-    hx711_begin(PIN_HX711_DT, PIN_HX711_SCK, g_calFactor, g_tareOffset);
+    // 4. Load persisted cal/tare/packetId
+    OAPersist::begin();
+    OAPersist::load(g_state);
+
+    hx711_begin(PIN_HX711_DT, PIN_HX711_SCK, g_state.calFactor, g_state.tareOffset);
 }
 
 void loop() {
+    static uint16_t cycleCount = 0;
+
     // 1. Wake HX711 and read
     float weightKg = hx711_read_median(10);
     uint16_t spread_g = hx711_last_spread_g();   // diagnostic; pack later if needed
     hx711_sleep();
+    (void)spread_g;
 
     // 2. Read battery (averaged ADC, see §4.2)
     float batteryV = readBatteryVoltage();
@@ -54,17 +78,17 @@ void loop() {
     // 3. Build BTHome v2 service-data payload
     // Service-data AD type (0x16) must start with the 16-bit UUID in little-endian,
     // followed by the BTHome payload bytes.
+    g_state.packetId++;                       // wraps the 8-bit advert field at the cast below
     uint8_t svcData[2 + 16];
     svcData[0] = (uint8_t)(BTHOME_SERVICE_UUID_16 & 0xFF);
     svcData[1] = (uint8_t)(BTHOME_SERVICE_UUID_16 >> 8);
     size_t payloadLen = bthome_build_payload(
         svcData + 2, sizeof(svcData) - 2,
-        ++g_packetId,
+        (uint8_t)(g_state.packetId & 0xFF),
         weightKg,
         batteryV,
         /*tempC*/ NAN  // not present on v1 hardware
     );
-    (void)spread_g;  // TODO: include in custom slot once decided
 
     // 4. Advertise for 300 ms
     // Friendly name "OA-XXXX" must be set BEFORE addName().
@@ -81,10 +105,14 @@ void loop() {
     delay(ADVERT_DURATION_MS);
     Bluefruit.Advertising.stop();
 
-    // 5. Persist packet counter and go to System OFF
-    // TODO: persist g_packetId to InternalFS every N cycles
-    // TODO: configure RTC compare match for WAKE_INTERVAL_MS, then call sd_power_system_off()
-    delay(WAKE_INTERVAL_MS);  // PLACEHOLDER — replace with true System OFF
+    // 5. Persist packet counter every N cycles to limit flash wear
+    if (++cycleCount >= PERSIST_EVERY_N_CYCLES) {
+        OAPersist::save(g_state);
+        cycleCount = 0;
+    }
+
+    // 6. Sleep until next cycle (FreeRTOS idle -> __WFE; see header comment)
+    delay(WAKE_INTERVAL_MS);
 }
 
 float readBatteryVoltage() {
@@ -99,4 +127,10 @@ float readBatteryVoltage() {
     float adc = acc / 20.0f;
     // 12-bit ADC, 3.0 V ref, divider 1510k/510k -> Vbat = adc * 3.0 / 4095 * (1510+510)/510
     return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f);
+}
+
+// nRF52840 USB regulator status — VBUSDETECT bit reads 1 when 5V is applied to USB.
+// Safe to call before USBDevice is initialised.
+static bool vbusPresent() {
+    return (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
 }

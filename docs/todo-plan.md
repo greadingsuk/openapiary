@@ -1,7 +1,7 @@
 # OpenApiary — To-Do Plan
 
 > **Status**: Live working document. Supersedes the original `migration-plan.md`.
-> **Last updated**: 2026-05-29
+> **Last updated**: 2026-06-01
 > **Repo**: <https://github.com/greadingsuk/openapiary>
 > **Licence**: PolyForm Noncommercial 1.0.0
 
@@ -68,21 +68,22 @@ XIAO scale  ──BLE advert──►  Phone (Ionic app)
 - ✅ PlatformIO Core installed (via VS Code extension; invoke as `& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe"`)
 - ✅ `platformio.ini` using **maxgerhardt** fork of `platform-nordicnrf52`, `board = xiaoble_adafruit` (Adafruit core, not mbed-seeed)
 - ✅ `lib_deps`: `bogde/HX711@^0.7.5` (Bluefruit, InternalFS, TinyUSB come from the Adafruit board core)
-- ✅ Firmware compiles cleanly — RAM 5.8 % / Flash 14.2 %
+- ✅ Firmware compiles cleanly — RAM 5.8 % / Flash 15.4 %
 
 ### Source files
-- ✅ `src/main.cpp` — wake-cycle skeleton with BLE advert build + start/stop
+- ✅ `src/main.cpp` — wake cycle, VBUS-gated cal mode entry, DCDC enable, persist load + per-N-cycle save
 - ✅ `src/bthome.h` — payload builder + `OA-XXXX` local name from `NRF_FICR->DEVICEADDR`
-- ✅ `src/hx711_helper.h` — 10-sample median, spread diagnostic, friction-guard re-read, HX711 power_down/up
-- 🟡 `src/cal_mode.cpp` — stub only; CLI not wired up yet
+- ✅ `src/hx711_helper.h` — 10-sample median, spread diagnostic, friction-guard re-read, HX711 power_down/up, raw-read helpers for cal mode
+- ✅ `src/persist.h` — InternalFS / LittleFS wrapper, `/cal.txt` plain-text store
+- ✅ `src/cal_mode.cpp` — USB-CDC CLI: `tare`, `cal <kg>`, `show`, `save`, `reboot`
 
 ### TODOs before flashing real hardware
-- ⬜ **Real System OFF + RTC wake** — replace placeholder `delay(WAKE_INTERVAL_MS)` with `sd_power_system_off()` and RTC compare-match wake (biggest power-budget item)
-- ⬜ **InternalFS / LittleFS persistence** for `g_calFactor`, `g_tareOffset`, `g_packetId`
-- ⬜ **Calibration CLI** in `cal_mode.cpp`: `tare`, `cal <kg>`, `show`, `reboot` over USB CDC at 115 200 baud
-- ⬜ **VBUS detect** at boot → enter cal mode if USB plugged in (skip advert loop)
-- ⬜ Wire `enterCalibrationMode()` into `setup()`
-- ⏭️ Hall-sensor cal trigger (needs the optional A3144 — deferred)
+- ✅ **Sleep model decided** — stick with `delay()` → FreeRTOS idle → `__WFE` (~2-5 µA with DCDC). True System OFF rejected because it can't wake from RTC on nRF52840.
+- ✅ **DCDC regulator enabled** in `setup()` via `sd_power_dcdc_mode_set`
+- ✅ **InternalFS / LittleFS persistence** for `calFactor`, `tareOffset`, `packetId` (saved every 16 cycles to limit flash wear)
+- ✅ **Calibration CLI** in `cal_mode.cpp` over USB CDC at 115200 baud
+- ✅ **VBUS detect** at boot → enters cal mode if USB plugged in (skips advert loop)
+- ⏭️ Hall-sensor cal trigger (needs optional A3144 — deferred)
 
 ### Power validation
 - ⬜ Once flashed, validate with Nordic PPK II — target <20 µA average
