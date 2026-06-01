@@ -56,8 +56,10 @@ XIAO scale  ──BLE advert──►  Phone (Ionic app)
 ## 2. Hardware
 
 - ✅ **Hardware ordered** (XIAO nRF52840 Standard, LiPo 1000 mAh JST-PH, resistors, ceramics, JST pigtails). Existing v4 BOM reused: load cells, HX711, solar panel, enclosure.
-- ⬜ Wire up and bench-test once parts arrive
-- ⬜ Update `docs/hardware-build.md` with photos + final pinout
+- ✅ Load cells wired into HXT combinator board (bathroom-scale full-Wheatstone pattern; see [hardware-wiring.md](hardware-wiring.md)). Resistance checks match the working personal hive-scale build (~1 Ω E+/E−, ~2 Ω A+/A−).
+- ⬜ Solder XIAO ↔ HX711 (3V3, GND, DT=D2, SCK=D3) and LiPo to BAT/GND
+- ⬜ First power-on: VBUS → cal mode → `tare`, `cal <kg>`, corner sanity check
+- ⬜ Update `docs/hardware-build.md` with photos
 - ⏭️ Hall sensor (A3144) for magnet-triggered cal mode — optional, deferred until v1.1
 
 ---
