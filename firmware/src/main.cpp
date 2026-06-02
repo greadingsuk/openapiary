@@ -37,13 +37,22 @@ static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets ac
 static const uint8_t  PERSIST_EVERY_N_CYCLES = 16;               // limit flash wear
 
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0 };
+static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
 
 // Forward decls
 float readBatteryVoltage();
 static bool vbusPresent();
+static float readDieTempC();
+static int   batteryPctFromVoltage(float v);
 
 void setup() {
+    // Snapshot + clear the reset reason BEFORE anything else touches it.
+    // Bits: 0=RESETPIN, 1=DOG (watchdog), 2=SREQ (soft), 3=LOCKUP, 16=OFF (wake from System OFF),
+    //       17=LPCOMP, 18=DIF (debug), 19=NFC, 20=VBUS. Brown-out resets show up as 0 (POR).
+    g_resetReason = NRF_POWER->RESETREAS;
+    NRF_POWER->RESETREAS = 0xFFFFFFFF;
+
     // 1. If USB is plugged in at boot, drop into the calibration CLI and stay there.
     if (vbusPresent()) {
         enterCalibrationMode();   // never returns
@@ -56,9 +65,11 @@ void setup() {
     // 3. Enable DCDC regulator — drops idle current from ~5 µA to ~2.5 µA.
     sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE);
 
-    // 4. Load persisted cal/tare/packetId
+    // 4. Load persisted cal/tare/packetId/bootCount and bump bootCount.
     OAPersist::begin();
     OAPersist::load(g_state);
+    g_state.bootCount++;
+    OAPersist::save(g_state);   // always save on boot so we never lose the count
 
     hx711_begin(PIN_HX711_DT, PIN_HX711_SCK, g_state.calFactor, g_state.tareOffset);
 }
@@ -72,14 +83,17 @@ void loop() {
     hx711_sleep();
     (void)spread_g;
 
-    // 2. Read battery (averaged ADC, see §4.2)
-    float batteryV = readBatteryVoltage();
+    // 2. Read battery (averaged ADC, see §4.2) + derived telemetry
+    float batteryV   = readBatteryVoltage();
+    int   batteryPct = batteryPctFromVoltage(batteryV);
+    float dieTempC   = readDieTempC();
+    bool  charging   = vbusPresent();   // true while USB / solar regulator delivers 5V
 
     // 3. Build BTHome v2 service-data payload
     // Service-data AD type (0x16) must start with the 16-bit UUID in little-endian,
     // followed by the BTHome payload bytes.
     g_state.packetId++;                       // wraps the 8-bit advert field at the cast below
-    uint8_t svcData[2 + 16];
+    uint8_t svcData[2 + 24];
     svcData[0] = (uint8_t)(BTHOME_SERVICE_UUID_16 & 0xFF);
     svcData[1] = (uint8_t)(BTHOME_SERVICE_UUID_16 >> 8);
     size_t payloadLen = bthome_build_payload(
@@ -87,7 +101,10 @@ void loop() {
         (uint8_t)(g_state.packetId & 0xFF),
         weightKg,
         batteryV,
-        /*tempC*/ NAN  // not present on v1 hardware
+        dieTempC,
+        batteryPct,
+        charging ? 1 : 0,
+        (int)(g_state.bootCount & 0xFFFF)
     );
 
     // 4. Advertise for 300 ms
@@ -130,7 +147,31 @@ float readBatteryVoltage() {
 }
 
 // nRF52840 USB regulator status — VBUSDETECT bit reads 1 when 5V is applied to USB.
-// Safe to call before USBDevice is initialised.
+// Safe to call before USBDevice is initialised. Also reads true when the solar charger
+// is delivering power through the same regulator path on a TP4056-style front-end.
 static bool vbusPresent() {
     return (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
+}
+
+// Read the nRF52840's on-die temperature sensor. ~±4°C absolute accuracy, fine for
+// trend tracking (catches a hive baking in sun, or the device dying of cold).
+static float readDieTempC() {
+    NRF_TEMP->TASKS_START = 1;
+    // Datasheet: data ready in ~36 µs. Bounded loop avoids any chance of a hang.
+    for (int i = 0; i < 1000 && !NRF_TEMP->EVENTS_DATARDY; i++) { /* spin */ }
+    NRF_TEMP->EVENTS_DATARDY = 0;
+    int32_t raw = (int32_t)NRF_TEMP->TEMP;   // signed, 0.25°C steps
+    NRF_TEMP->TASKS_STOP = 1;
+    return raw * 0.25f;
+}
+
+// Map LiPo voltage to a rough state-of-charge percentage.
+// Piecewise-linear approximation of a typical 1S LiPo discharge curve under light load.
+// 4.20V = 100 %, 3.90V ≈ 60 %, 3.70V ≈ 25 %, 3.30V = 0 %.
+static int batteryPctFromVoltage(float v) {
+    if (v >= 4.20f) return 100;
+    if (v >= 3.90f) return (int)(60 + (v - 3.90f) * (40.0f / 0.30f));
+    if (v >= 3.70f) return (int)(25 + (v - 3.70f) * (35.0f / 0.20f));
+    if (v >= 3.30f) return (int)( 0 + (v - 3.30f) * (25.0f / 0.40f));
+    return 0;
 }

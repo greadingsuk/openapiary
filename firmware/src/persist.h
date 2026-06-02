@@ -17,6 +17,7 @@ struct State {
     float    calFactor;
     int32_t  tareOffset;
     uint32_t packetId;     // wider than the 8-bit advert field so we can persist a generation count
+    uint32_t bootCount;    // incremented every time the firmware starts (reset / power-on)
 };
 
 inline bool begin() {
@@ -38,6 +39,7 @@ inline bool load(State& out) {
         if      (!strncmp(line, "cal=",  4)) out.calFactor  = atof(line + 4);
         else if (!strncmp(line, "tare=", 5)) out.tareOffset = atol(line + 5);
         else if (!strncmp(line, "pid=",  4)) out.packetId   = (uint32_t)atol(line + 4);
+        else if (!strncmp(line, "boot=", 5)) out.bootCount  = (uint32_t)atol(line + 5);
         line = strtok(nullptr, "\r\n");
     }
     return true;
@@ -49,10 +51,11 @@ inline bool save(const State& in) {
     if (!f.open(PATH, FILE_O_WRITE)) return false;
     char buf[160];
     int n = snprintf(buf, sizeof(buf),
-                     "cal=%.4f\ntare=%ld\npid=%lu\n",
+                     "cal=%.4f\ntare=%ld\npid=%lu\nboot=%lu\n",
                      in.calFactor,
                      (long)in.tareOffset,
-                     (unsigned long)in.packetId);
+                     (unsigned long)in.packetId,
+                     (unsigned long)in.bootCount);
     if (n <= 0) { f.close(); return false; }
     f.write((const uint8_t*)buf, n);
     f.close();
