@@ -135,15 +135,21 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 - ✅ Settings store using `@capacitor/preferences` (`src/lib/settings.ts`)
 - ✅ Screens: `HiveListPage`, `HiveDetailPage`, `AddHivePage` (scan+pair), `SettingsPage`
 - ✅ Production build verified
-- ⬜ `npx cap add ios` (macOS required)
+- ✅ Local SQLite schema (`hives`, `readings`) with `synced=0` flag (`src/lib/db.ts`)
+- ✅ **Auto-sync** — fires on app boot + every 5 min; per-hive batched POSTs; only marks rows synced on HTTP 200 (`src/lib/sync.ts`)
+- ✅ **Manual "Sync now"** button on Settings showing pending count
+- ✅ iOS platform scaffolded (Capacitor 8 uses Swift Package Manager — works on Windows; no Mac needed for scaffold, only for local build)
 - ⬜ Copy v4 Tailwind tokens + hex motif into `app/tailwind.config.js`
 - ⬜ Port `hive-visual.js` → `<HiveVisual />` React component
-- ⬜ Local SQLite schema (`hives`, `readings`) per plan §5.5 — every row starts `synced=0`
 - ⬜ Background BLE store-and-forward (current pages scan only while open)
-- ⬜ **Auto-sync** — fire `POST /v1/readings` (a) on app foreground, (b) every 5 min while open, (c) immediately after any new BLE advert is stored. Only flip rows to `synced=1` on confirmed HTTP 200.
-- ⬜ **Manual "Sync now"** button (per-hive + global on Settings) for user-triggered flush
 - ⬜ Long-range charts (7d / 30d) — `react-chartjs-2`
 - ⏭️ Background scanning, iOS push notifications — Phase 2
+
+### 5.x Distribution plan
+
+- **Android:** debug `.apk` built free by GitHub Actions on every push. Side-load forever, no cost.
+- **iOS (now, free):** GitHub Actions builds unsigned simulator `.app` per commit. Anyone with a Mac can run it in the Simulator. No real-iPhone install yet.
+- **iOS (target):** $99/yr Apple Developer Program → publish to App Store. Once live, any iPhone user installs from the store with no expiry. Update workflow with signing secrets (`APPLE_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD`, `APPLE_PROVISIONING_PROFILE`, `APPLE_TEAM_ID`) and switch `xcodebuild build` → `xcodebuild archive` + `exportArchive` + `xcrun altool --upload-app` to TestFlight, then promote to App Store after review.
 
 ---
 
