@@ -150,9 +150,16 @@ firmware/.pioenvs/
 firmware/.piolibdeps/
 firmware/.vscode/
 
-# Capacitor / iOS / Android build outputs
-app/ios/
-app/android/
+# Capacitor build outputs (keep the platform projects themselves so manifest edits persist)
+app/ios/build/
+app/ios/Pods/
+app/ios/App/Podfile.lock
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/android/captures/
+app/android/.idea/
 app/.capacitor/
 
 # Wrangler
