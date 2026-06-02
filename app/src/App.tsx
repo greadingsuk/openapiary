@@ -1,10 +1,13 @@
 import { Redirect, Route } from 'react-router-dom';
 import { IonApp, IonRouterOutlet, setupIonicReact } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
+import { useEffect } from 'react';
 import HiveListPage from './pages/HiveListPage';
 import HiveDetailPage from './pages/HiveDetailPage';
 import AddHivePage from './pages/AddHivePage';
 import SettingsPage from './pages/SettingsPage';
+import { initDb } from './lib/db';
+import { startAutoSync, stopAutoSync } from './lib/sync';
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/react/css/core.css';
@@ -38,7 +41,14 @@ import './theme/variables.css';
 
 setupIonicReact();
 
-const App: React.FC = () => (
+const App: React.FC = () => {
+  useEffect(() => {
+    void initDb();
+    startAutoSync();
+    return () => stopAutoSync();
+  }, []);
+
+  return (
   <IonApp>
     <IonReactRouter>
       <IonRouterOutlet>
@@ -52,6 +62,7 @@ const App: React.FC = () => (
       </IonRouterOutlet>
     </IonReactRouter>
   </IonApp>
-);
+  );
+};
 
 export default App;

@@ -5,8 +5,8 @@ import {
 } from '@ionic/react';
 import { useEffect, useState } from 'react';
 import { startScan, stopScan, type OAAdvert } from '../lib/ble';
-import { loadSettings } from '../lib/settings';
-import { postReadings } from '../lib/api';
+import { upsertHive, insertReading } from '../lib/db';
+import { syncNow } from '../lib/sync';
 
 const AddHivePage: React.FC = () => {
   const [scanning, setScanning] = useState(false);
@@ -23,11 +23,23 @@ const AddHivePage: React.FC = () => {
     setError(null);
     setFound(new Map());
     try {
-      await startScan((a) => {
+      await startScan(async (a) => {
         setFound((prev) => {
           const next = new Map(prev);
           next.set(a.deviceId, a);
           return next;
+        });
+        // Write-through to local SQLite so nothing is ever lost.
+        const hiveId = a.deviceName.toLowerCase();
+        await upsertHive({ id: hiveId, name: a.deviceName, created_at: Date.now() });
+        await insertReading({
+          hive_id: hiveId,
+          ts: a.ts,
+          weight_kg: a.weightKg,
+          battery_v: a.batteryV,
+          temp_c: a.tempC,
+          packet_id: a.packetId,
+          rssi: a.rssi,
         });
       });
       setScanning(true);
@@ -40,17 +52,10 @@ const AddHivePage: React.FC = () => {
 
   async function pair(a: OAAdvert) {
     try {
-      const s = await loadSettings();
-      if (!s.apiKey) { setError('Set API key in Settings first'); return; }
       const hiveId = a.deviceName.toLowerCase();
-      await postReadings(s, hiveId, a.deviceName, [{
-        ts: a.ts,
-        weightKg: a.weightKg,
-        batteryV: a.batteryV,
-        tempC: a.tempC,
-        packetId: a.packetId,
-        rssi: a.rssi,
-      }]);
+      // Already cached locally on every advert; just kick a sync.
+      const r = await syncNow();
+      if (r.failed.length) throw new Error(r.failed.join('; '));
       setSavedId(hiveId);
     } catch (e: any) {
       setError(e.message ?? String(e));

@@ -5,18 +5,35 @@ import {
 } from '@ionic/react';
 import { useEffect, useState } from 'react';
 import { loadSettings, saveSettings, type Settings } from '../lib/settings';
+import { syncNow, unsyncedCount } from '../lib/sync';
 
 const SettingsPage: React.FC = () => {
   const [s, setS] = useState<Settings | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [unsynced, setUnsynced] = useState<number>(0);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
-  useEffect(() => { void loadSettings().then(setS); }, []);
+  async function refreshUnsynced() {
+    try { setUnsynced(await unsyncedCount()); } catch { /* noop */ }
+  }
+
+  useEffect(() => {
+    void loadSettings().then(setS);
+    void refreshUnsynced();
+  }, []);
 
   if (!s) return null;
 
   async function save() {
     await saveSettings(s!);
     setSavedAt(Date.now());
+  }
+
+  async function runSync() {
+    setSyncMsg('Syncing...');
+    const r = await syncNow();
+    setSyncMsg(`Synced ${r.succeeded}/${r.attempted}${r.failed.length ? ' - ' + r.failed.join('; ') : ''}`);
+    await refreshUnsynced();
   }
 
   return (
@@ -58,6 +75,10 @@ const SettingsPage: React.FC = () => {
         <div className="ion-padding">
           <IonButton expand="block" onClick={save}>Save</IonButton>
           {savedAt && <p>Saved {new Date(savedAt).toLocaleTimeString()}</p>}
+          <IonButton expand="block" color="secondary" onClick={runSync} className="ion-margin-top">
+            Sync now ({unsynced} pending)
+          </IonButton>
+          {syncMsg && <p>{syncMsg}</p>}
         </div>
       </IonContent>
     </IonPage>
