@@ -4,6 +4,7 @@ export interface Settings {
   apiUrl: string;
   apiKey: string;
   syncEnabled: boolean;
+  backgroundScan: boolean;
 }
 
 const KEY = 'openapiary.settings.v1';
@@ -12,6 +13,7 @@ const DEFAULTS: Settings = {
   apiUrl: 'https://oa-api-staging.grantjreadings.workers.dev',
   apiKey: '',
   syncEnabled: false,
+  backgroundScan: false,
 };
 
 export async function loadSettings(): Promise<Settings> {

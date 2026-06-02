@@ -7,6 +7,8 @@ import { useEffect, useState } from 'react';
 import { startScan, stopScan, type OAAdvert } from '../lib/ble';
 import { upsertHive, insertReading } from '../lib/db';
 import { syncNow } from '../lib/sync';
+import { loadSettings } from '../lib/settings';
+import { startBackgroundScan, stopBackgroundScan } from '../lib/backgroundScan';
 
 const AddHivePage: React.FC = () => {
   const [scanning, setScanning] = useState(false);
@@ -17,11 +19,16 @@ const AddHivePage: React.FC = () => {
   async function toggleScan() {
     if (scanning) {
       await stopScan();
+      await stopBackgroundScan();
       setScanning(false);
       return;
     }
     setError(null);
     setFound(new Map());
+    const settings = await loadSettings();
+    if (settings.backgroundScan) {
+      await startBackgroundScan();
+    }
     try {
       await startScan(async (a) => {
         setFound((prev) => {
@@ -48,7 +55,7 @@ const AddHivePage: React.FC = () => {
     }
   }
 
-  useEffect(() => () => { void stopScan(); }, []);
+  useEffect(() => () => { void stopScan(); void stopBackgroundScan(); }, []);
 
   async function pair(a: OAAdvert) {
     try {

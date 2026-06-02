@@ -51,5 +51,15 @@
 	<string>OpenApiary uses Bluetooth to receive weight and battery readings from your hive scales.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>OpenApiary uses Bluetooth to receive weight and battery readings from your hive scales.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>OpenApiary uses your location to associate hive readings with your apiary and to detect when you arrive at a hive site.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>OpenApiary uses background location only to wake the app briefly when you arrive at your apiary so hive readings can sync.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>location</string>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

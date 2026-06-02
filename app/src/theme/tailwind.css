@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* OpenApiary honey/hex theme tokens (Tailwind v4 @theme syntax) */
+@theme {
+  --color-honey-50:  #fff8e6;
+  --color-honey-100: #ffe9a8;
+  --color-honey-200: #ffd76b;
+  --color-honey-300: #ffc233;
+  --color-honey-400: #f5a91f;
+  --color-honey-500: #d98a0c;
+  --color-honey-600: #a96809;
+  --color-honey-700: #774905;
+  --color-comb-bg:   #1a1410;
+  --color-comb-fg:   #fff3d1;
+}
+
+/* Hex motif cell - used by HiveVisual */
+.hex-cell {
+  clip-path: polygon(25% 6%, 75% 6%, 100% 50%, 75% 94%, 25% 94%, 0% 50%);
+}

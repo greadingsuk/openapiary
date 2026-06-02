@@ -71,6 +71,19 @@ const SettingsPage: React.FC = () => {
               <IonLabel>Sync to cloud</IonLabel>
             </IonToggle>
           </IonItem>
+          <IonItem>
+            <IonToggle
+              checked={s.backgroundScan}
+              onIonChange={(e) => setS({ ...s, backgroundScan: e.detail.checked })}
+            >
+              <IonLabel>
+                Background scanning (Android)
+                <p style={{ fontSize: '0.8em', opacity: 0.7 }}>
+                  Keeps listening for hive heartbeats with screen off. Shows a persistent notification.
+                </p>
+              </IonLabel>
+            </IonToggle>
+          </IonItem>
         </IonList>
         <div className="ion-padding">
           <IonButton expand="block" onClick={save}>Save</IonButton>

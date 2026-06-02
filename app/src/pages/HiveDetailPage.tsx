@@ -7,6 +7,8 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings, type HiveReading } from '../lib/api';
 import { loadSettings } from '../lib/settings';
+import HiveVisual from '../components/HiveVisual';
+import WeightChart from '../components/WeightChart';
 
 const HiveDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -35,8 +37,13 @@ const HiveDetailPage: React.FC = () => {
           <IonTitle>{id}</IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent>
+      <IonContent className="bg-comb-bg">
         {error && <IonItem color="warning"><IonLabel>{error}</IonLabel></IonItem>}
+        <HiveVisual
+          name={id}
+          weightKg={latest?.weight_kg ?? null}
+          batteryV={latest?.battery_v ?? null}
+        />
         {latest && (
           <IonList>
             <IonItem><IonLabel>Weight</IonLabel><IonLabel slot="end">{latest.weight_kg?.toFixed(2) ?? '-'} kg</IonLabel></IonItem>
@@ -46,7 +53,15 @@ const HiveDetailPage: React.FC = () => {
             <IonItem><IonLabel>Last seen</IonLabel><IonLabel slot="end">{new Date(latest.ts).toLocaleString()}</IonLabel></IonItem>
           </IonList>
         )}
-        <h3 className="ion-padding">History ({readings.length})</h3>
+        <div className="ion-padding">
+          <h3 className="text-honey-200 mb-2">Weight trend</h3>
+          <WeightChart readings={[...readings].reverse()} metric="weight" />
+        </div>
+        <div className="ion-padding">
+          <h3 className="text-honey-200 mb-2">Battery</h3>
+          <WeightChart readings={[...readings].reverse()} metric="battery" />
+        </div>
+        <h3 className="ion-padding text-honey-200">History ({readings.length})</h3>
         <IonList>
           {readings.map((r, i) => (
             <IonItem key={i}>

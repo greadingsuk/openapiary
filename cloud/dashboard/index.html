@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenApiary - Fleet Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #1a1410;
+    --fg: #fff3d1;
+    --accent: #f5a91f;
+    --accent-2: #ffc233;
+    --muted: rgba(255, 243, 209, 0.55);
+    --card: #2a1f15;
+    --border: rgba(255, 243, 209, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--fg); min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    background: var(--card);
+  }
+  header h1 { margin: 0; font-size: 18px; color: var(--accent-2); font-weight: 700; letter-spacing: 0.5px; }
+  header .config { display: flex; gap: 8px; align-items: center; }
+  input, button, select {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    padding: 8px 12px; border-radius: 6px; font-size: 13px;
+  }
+  button { cursor: pointer; background: var(--accent); color: var(--bg); border: none; font-weight: 600; }
+  button:hover { background: var(--accent-2); }
+  main { padding: 24px; display: grid; gap: 24px; max-width: 1400px; margin: 0 auto; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
+  }
+  .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
+  .stat .value { color: var(--accent-2); font-size: 32px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px;
+  }
+  .card h2 { margin: 0 0 16px 0; font-size: 14px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 1px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.8px; }
+  td.mono { font-family: ui-monospace, monospace; color: var(--muted); }
+  .error { background: #5a1f1f; color: #ffd0d0; padding: 12px 16px; border-radius: 6px; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  canvas { max-height: 280px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPENAPIARY &middot; FLEET</h1>
+  <div class="config">
+    <input id="apiUrl" placeholder="API URL" size="50" />
+    <input id="adminKey" type="password" placeholder="Admin Key" size="40" />
+    <button id="loadBtn">Load</button>
+  </div>
+</header>
+<main>
+  <div id="error"></div>
+  <section class="stats" id="stats"></section>
+  <section class="grid-2">
+    <div class="card">
+      <h2>Fleet weight - last 7 days</h2>
+      <canvas id="weightChart"></canvas>
+    </div>
+    <div class="card">
+      <h2>Hives by region</h2>
+      <canvas id="regionChart"></canvas>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Hives (anonymised)</h2>
+    <div id="hivesTable"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LS_URL = 'oa.fleet.apiUrl';
+const LS_KEY = 'oa.fleet.adminKey';
+
+$('apiUrl').value = localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev';
+$('adminKey').value = localStorage.getItem(LS_KEY) || '';
+
+let weightChart, regionChart;
+
+async function api(path) {
+  const base = $('apiUrl').value.replace(/\/$/, '');
+  const r = await fetch(base + path, { headers: { 'X-Admin-Key': $('adminKey').value } });
+  if (!r.ok) throw new Error(`${path}: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+function renderStats(s) {
+  const cells = [
+    ['Users',           s.users],
+    ['Hives',           s.hives],
+    ['Active 24h',      s.hives_active_24h],
+    ['Readings (24h)',  s.readings_24h],
+    ['Readings (total)', s.readings_total],
+  ];
+  $('stats').innerHTML = cells.map(([label, value]) =>
+    `<div class="stat"><div class="label">${label}</div><div class="value">${value.toLocaleString()}</div></div>`
+  ).join('');
+}
+
+function renderHives(hives) {
+  if (!hives.length) {
+    $('hivesTable').innerHTML = '<div class="empty">No hives yet.</div>';
+    return;
+  }
+  const rows = hives.map(h => `
+    <tr>
+      <td class="mono">${h.id}</td>
+      <td class="mono">${h.user_prefix}...</td>
+      <td>${h.region || '-'}</td>
+      <td class="mono">${h.lat != null ? h.lat.toFixed(3) : '-'}, ${h.lon != null ? h.lon.toFixed(3) : '-'}</td>
+      <td>${new Date(h.created_at).toLocaleDateString()}</td>
+      <td>${h.public ? 'yes' : 'no'}</td>
+    </tr>`).join('');
+  $('hivesTable').innerHTML = `
+    <table>
+      <thead><tr><th>Hive ID</th><th>User</th><th>Region</th><th>Lat, Lon</th><th>Created</th><th>Public</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // Region pie
+  const byRegion = {};
+  for (const h of hives) {
+    const r = h.region || '(unset)';
+    byRegion[r] = (byRegion[r] || 0) + 1;
+  }
+  const labels = Object.keys(byRegion);
+  const data = Object.values(byRegion);
+  if (regionChart) regionChart.destroy();
+  regionChart = new Chart($('regionChart'), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: ['#f5a91f', '#ffc233', '#a96809', '#774905', '#fff8e6', '#ffd76b'],
+        borderColor: '#1a1410',
+        borderWidth: 2,
+      }],
+    },
+    options: { plugins: { legend: { labels: { color: '#fff3d1' } } } },
+  });
+}
+
+function renderWeightChart(readings) {
+  // Aggregate to hourly average across the fleet so it's a usable signal at scale.
+  const buckets = new Map();
+  for (const r of readings) {
+    if (r.weight_kg == null) continue;
+    const hour = Math.floor(r.ts / 3_600_000) * 3_600_000;
+    const b = buckets.get(hour) || { sum: 0, n: 0 };
+    b.sum += r.weight_kg; b.n += 1;
+    buckets.set(hour, b);
+  }
+  const points = [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, b]) => ({ x: ts, y: b.sum / b.n }));
+
+  if (weightChart) weightChart.destroy();
+  weightChart = new Chart($('weightChart'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Fleet mean weight (kg)',
+        data: points,
+        borderColor: '#f5a91f',
+        backgroundColor: 'rgba(255, 194, 51, 0.2)',
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { type: 'time', ticks: { color: '#fff3d1', maxTicksLimit: 8 }, grid: { color: 'rgba(255,243,209,0.08)' } },
+        y: { ticks: { color: '#fff3d1' }, grid: { color: 'rgba(255,243,209,0.08)' } },
+      },
+      plugins: { legend: { labels: { color: '#fff3d1' } } },
+    },
+  });
+}
+
+$('loadBtn').onclick = async () => {
+  $('error').innerHTML = '';
+  localStorage.setItem(LS_URL, $('apiUrl').value);
+  localStorage.setItem(LS_KEY, $('adminKey').value);
+  try {
+    const [stats, hives, readings] = await Promise.all([
+      api('/v1/admin/fleet/stats'),
+      api('/v1/admin/fleet/hives'),
+      api('/v1/admin/fleet/readings'),
+    ]);
+    renderStats(stats);
+    renderHives(hives.hives);
+    renderWeightChart(readings.readings);
+  } catch (e) {
+    $('error').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+};
+
+// Auto-load if key is already saved.
+if ($('adminKey').value) $('loadBtn').click();
+</script>
+</body>
+</html>
