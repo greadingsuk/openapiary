@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'io.ionic.starter',
-  appName: 'app',
+  appId: 'uk.co.openapiary.app',
+  appName: 'OpenApiary',
   webDir: 'dist'
 };
 
