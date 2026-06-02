@@ -126,19 +126,23 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 
 ## 5. App (`app/`) — Ionic React + Capacitor
 
-- 🟡 Folder exists with README only (interactive `npm create ionic-app@latest` deferred)
-- ⬜ Run `npm create ionic-app@latest app -- --type react --capacitor --name openapiary --no-git`
-- ⬜ Add deps: `@capacitor-community/bluetooth-le`, `@capacitor-community/sqlite`, `react-chartjs-2`, `chart.js`, `tailwindcss`
-- ⬜ `npx cap add ios` / `npx cap add android`
+- ✅ Scaffolded Ionic React + Capacitor (blank starter), appId `uk.co.openapiary.app`
+- ✅ Deps installed: `@capacitor-community/bluetooth-le`, `@capacitor-community/sqlite`, `@capacitor/preferences`
+- ✅ Android platform added with BLE manifest permissions (`BLUETOOTH_SCAN` neverForLocation, `BLUETOOTH_CONNECT`, legacy fallbacks)
+- ✅ BTHome v2 parser (`src/lib/bthome.ts`) mirroring `firmware/src/bthome.h`
+- ✅ Cloudflare Worker API client (`src/lib/api.ts`)
+- ✅ BLE scanner wrapper (`src/lib/ble.ts`)
+- ✅ Settings store using `@capacitor/preferences` (`src/lib/settings.ts`)
+- ✅ Screens: `HiveListPage`, `HiveDetailPage`, `AddHivePage` (scan+pair), `SettingsPage`
+- ✅ Production build verified
+- ⬜ `npx cap add ios` (macOS required)
 - ⬜ Copy v4 Tailwind tokens + hex motif into `app/tailwind.config.js`
 - ⬜ Port `hive-visual.js` → `<HiveVisual />` React component
 - ⬜ Local SQLite schema (`hives`, `readings`) per plan §5.5 — every row starts `synced=0`
-- ⬜ BTHome v2 service-data parser (mirror `firmware/src/bthome.h`)
-- ⬜ Screens: `HiveListPage`, `HiveDetailPage`, `AddHivePage`, `SettingsPage`, `CalibrationHelperPage`
-- ⬜ Foreground BLE scan while a hive screen is open (no background scan in v1)
+- ⬜ Background BLE store-and-forward (current pages scan only while open)
 - ⬜ **Auto-sync** — fire `POST /v1/readings` (a) on app foreground, (b) every 5 min while open, (c) immediately after any new BLE advert is stored. Only flip rows to `synced=1` on confirmed HTTP 200.
 - ⬜ **Manual "Sync now"** button (per-hive + global on Settings) for user-triggered flush
-- ⬜ **Read-back from cloud**: long-range charts (7d / 30d) `GET /v1/hives/:id/readings` when online; local-cache fallback offline
+- ⬜ Long-range charts (7d / 30d) — `react-chartjs-2`
 - ⏭️ Background scanning, iOS push notifications — Phase 2
 
 ---
