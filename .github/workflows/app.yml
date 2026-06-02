@@ -8,9 +8,11 @@ on:
   pull_request:
     paths:
       - "app/**"
+  workflow_dispatch:
 
 jobs:
-  build:
+  # 1. Web build - cheap, runs first as a gate.
+  web:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,18 +22,89 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Skip if app is still a stub
-        id: stub
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: app/dist
+          retention-days: 7
+
+  # 2. Android APK (debug, unsigned). Drops a side-loadable .apk in Actions artifacts.
+  android:
+    needs: web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+      - name: Build debug APK
+        working-directory: app/android
+        run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapiary-android-debug-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+  # 3. iOS (unsigned simulator build). Produces an .app bundle in Actions artifacts.
+  # To distribute to a real iPhone you need to enable signing - see notes at bottom.
+  ios:
+    needs: web
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: Build iOS app (simulator, unsigned)
+        working-directory: app/ios/App
         run: |
-          if [ ! -f package.json ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "App not scaffolded yet; skipping build."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Install
-        if: steps.stub.outputs.skip == 'false'
-        run: npm ci
-      - name: Build
-        if: steps.stub.outputs.skip == 'false'
-        run: npm run build
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapiary-ios-simulator-app
+          path: app/ios/App/build/Build/Products/Debug-iphonesimulator/App.app
+          retention-days: 30
+
+      # ---- TO ENABLE REAL-DEVICE / TESTFLIGHT BUILDS ----
+      # 1. Sign up for Apple Developer Program (currently $99/yr).
+      # 2. Create an App ID matching uk.co.openapiary.app.
+      # 3. In repo Settings -> Secrets, add:
+      #      APPLE_CERT_P12_BASE64       (.p12 cert exported from Keychain, base64-encoded)
+      #      APPLE_CERT_PASSWORD         (password for the .p12)
+      #      APPLE_PROVISIONING_PROFILE  (.mobileprovision base64-encoded)
+      #      APPLE_TEAM_ID               (10-char team ID)
+      # 4. Replace the build step above with `xcodebuild archive` + `exportArchive`
+      #    referencing the imported cert, then upload the .ipa to TestFlight with
+      #    `xcrun altool --upload-app`. Many template workflows online.
