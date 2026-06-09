@@ -50,7 +50,94 @@ the hive.
 | `DT`      | `D2`           | Data — defined in firmware as `PIN_HX711_DT`. |
 | `SCK`     | `D3`           | Clock — `PIN_HX711_SCK`. Driven low between reads to put the HX711 in 1 µA sleep. |
 
-## Battery wiring (LiPo)
+## Battery, switch and solar (v1 field build)
+
+This is the topology used for the first field unit. Everything is soldered
+directly to the XIAO; no breakout PCB.
+
+### Parts
+
+- 1× 3.7 V LiPo, **603048**, ~1000 mAh, bare leads (no JST)
+- 1× 5 V / 1 W monocrystalline solar panel (~110 × 60 mm, Voc ~5.5 V, Isc ~200 mA)
+- 1× 2-terminal rocker switch (SPST)
+
+### Topology
+
+```
+   Solar +  ─────────────────────► XIAO VBUS pad
+   Solar −  ─────────────────────► XIAO GND  pad
+
+   LiPo  +  ──[ ROCKER SW ]──────► XIAO BAT  pad
+   LiPo  −  ─────────────────────► XIAO GND  pad
+```
+
+### Why this works
+
+The XIAO nRF52840 has an on-board LiPo charger (BQ25101) wired between VBUS
+and the BAT pad. Apply 5 V to VBUS and it charges the cell at up to ~100 mA —
+a good match for a 1 W panel that peaks around 200 mA in direct sun.
+
+- The charger blocks reverse current from BAT to VBUS, so no Schottky diode
+  is needed in the solar line.
+- When the panel is in shade/night, VBUS floats and the chip runs from BAT as
+  normal. Firmware's `vbusPresent()` reads `false` in that state and the
+  charging-state telemetry field reports `0`.
+- When the panel is delivering, `vbusPresent()` reads `true` and the firmware
+  broadcasts charging = 1 — useful for spotting cloudy days in the data.
+
+### Switch placement
+
+The rocker goes on the **battery + line** (between LiPo + and the BAT pad).
+
+- OFF + dark → unit fully off, zero battery drain. Safe for storage/transit.
+- OFF + sun → chip runs from solar via VBUS; battery isolated, not charged.
+  Harmless but obviously not useful in the field; just turn the switch ON.
+- ON → normal operation, solar tops up the cell during the day.
+
+A 2-terminal rocker can only break one line; cutting battery + is the right
+choice because it makes "OFF" mean "battery isolated".
+
+### Soldering order (recommended)
+
+1. **Tin all four XIAO pads first** (VBUS, GND × 2, BAT) with a tiny dab of
+   solder. Easier to land wires later.
+2. Strip and tin **all wire ends** (solar +/−, battery +/−, both switch tails).
+3. Solar panel:
+   - Solar `+` → XIAO VBUS
+   - Solar `−` → XIAO GND
+4. Battery:
+   - LiPo `−` → XIAO GND (the other GND pad, not the one used for solar — gives
+     you mechanical room)
+   - LiPo `+` → one terminal of the rocker switch
+   - Other rocker terminal → XIAO BAT pad
+5. **Strain relief**: put a dab of hot-glue over each XIAO pad joint once tested.
+   The pads are pull-up-and-rip if a wire is yanked.
+
+### First power-on test (before installing in a hive)
+
+1. **Switch OFF**, no solar light, no USB. Multimeter on continuity between
+   battery + and BAT pad: should be **open** (switch off).
+2. **Switch ON**, multimeter same place: should be **closed** (~0 Ω).
+3. **Switch ON**, no solar, USB unplugged. Touch a multimeter across BAT and
+   GND: should read battery voltage (~3.7–4.2 V). Chip should boot and start
+   advertising; check with `nRF Connect` app or your OpenApiary app.
+4. Shine a torch / put in sun. Re-read serial via USB later — `charging` field
+   in BTHome advert should flip to 1.
+5. Leave it on the bench under window light for an hour. Battery voltage at
+   the BAT pad should creep up.
+
+### Safe-handling reminders
+
+- LiPo polarity matters. Reversing the cell can damage the BQ25101 charger
+  and brick the XIAO. **Double-check + and −** with a multimeter before
+  applying the switch.
+- Don't let the LiPo dangle by its leads — tape or hot-glue it to the inside
+  of the enclosure wall.
+- The 603048 cell is unprotected (no PCM); if you discharge it below ~3.0 V it
+  will degrade rapidly. Firmware reports battery % via BTHome ID `0x01`; pull
+  the unit when the dashboard shows < 10 %.
+
+## Battery wiring (LiPo) — legacy JST notes
 
 - LiPo `+` → XIAO `BAT` pad
 - LiPo `−` → XIAO `GND` pad
