@@ -31,7 +31,7 @@ const AddHivePage: React.FC = () => {
     setFound(new Map());
     // Optimistic feedback so the button always responds visibly.
     setScanning(true);
-    setStatus('Checking Bluetooth…');
+    setStatus('Checking Bluetooth… tap "Allow" if iOS asks for permission.');
     try {
       // Triggers the iOS permission prompt on first run and verifies the radio.
       await ensureBleReady();

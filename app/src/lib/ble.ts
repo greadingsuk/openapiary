@@ -27,9 +27,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 async function ensureInit() {
   if (initialised) return;
+  // 30 s, not 8 s: on first run iOS shows the permission dialog and
+  // initialize() only resolves AFTER the user taps Allow. A short timeout
+  // races the human and aborts before permission is granted.
   await withTimeout(
     BleClient.initialize({ androidNeverForLocation: true }),
-    8000,
+    30000,
     'Bluetooth initialise',
   );
   initialised = true;
