@@ -4,7 +4,7 @@ import {
   IonNote, IonSpinner,
 } from '@ionic/react';
 import { useEffect, useState } from 'react';
-import { startScan, stopScan, type OAAdvert } from '../lib/ble';
+import { startScan, stopScan, ensureBleReady, type OAAdvert } from '../lib/ble';
 import { upsertHive, insertReading } from '../lib/db';
 import { syncNow } from '../lib/sync';
 import { loadSettings } from '../lib/settings';
@@ -14,23 +14,34 @@ const AddHivePage: React.FC = () => {
   const [scanning, setScanning] = useState(false);
   const [found, setFound] = useState<Map<string, OAAdvert>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
 
   async function toggleScan() {
     if (scanning) {
+      setStatus('Stopping…');
       await stopScan();
       await stopBackgroundScan();
       setScanning(false);
+      setStatus(null);
       return;
     }
     setError(null);
+    setSavedId(null);
     setFound(new Map());
-    const settings = await loadSettings();
-    if (settings.backgroundScan) {
-      await startBackgroundScan();
-    }
+    // Optimistic feedback so the button always responds visibly.
+    setScanning(true);
+    setStatus('Checking Bluetooth…');
     try {
+      // Triggers the iOS permission prompt on first run and verifies the radio.
+      await ensureBleReady();
+      const settings = await loadSettings();
+      if (settings.backgroundScan) {
+        await startBackgroundScan();
+      }
+      setStatus('Scanning for OA-XXXX (adverts every ~30 s)…');
       await startScan(async (a) => {
+        setStatus(`Heard ${a.deviceName}`);
         setFound((prev) => {
           const next = new Map(prev);
           next.set(a.deviceId, a);
@@ -49,9 +60,12 @@ const AddHivePage: React.FC = () => {
           rssi: a.rssi,
         });
       });
-      setScanning(true);
     } catch (e: any) {
-      setError(e.message ?? String(e));
+      setError(e?.message ?? String(e));
+      setStatus(null);
+      setScanning(false);
+      await stopScan().catch(() => undefined);
+      await stopBackgroundScan().catch(() => undefined);
     }
   }
 
@@ -84,7 +98,8 @@ const AddHivePage: React.FC = () => {
           {scanning ? 'Stop scan' : 'Start BLE scan'}
         </IonButton>
         {scanning && <IonSpinner className="ion-margin" />}
-        {error && <IonItem color="warning"><IonLabel>{error}</IonLabel></IonItem>}
+        {status && <IonItem><IonLabel className="ion-text-wrap">{status}</IonLabel></IonItem>}
+        {error && <IonItem color="warning"><IonLabel className="ion-text-wrap">{error}</IonLabel></IonItem>}
         {savedId && <IonItem color="success"><IonLabel>Paired: {savedId}</IonLabel></IonItem>}
         <IonList>
           {adverts.map((a) => (

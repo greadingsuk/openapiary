@@ -20,6 +20,29 @@ async function ensureInit() {
   initialised = true;
 }
 
+/**
+ * Force the BLE stack to initialise and confirm the radio is enabled.
+ * On iOS, calling initialize() then isEnabled() triggers the CoreBluetooth
+ * permission prompt the first time and adds the toggle to iOS Settings.
+ * Throws a human-readable error the UI can display.
+ */
+export async function ensureBleReady(): Promise<void> {
+  try {
+    await ensureInit();
+  } catch (e: any) {
+    throw new Error(`BLE init failed: ${e?.message ?? e}`);
+  }
+  let enabled = false;
+  try {
+    enabled = await BleClient.isEnabled();
+  } catch (e: any) {
+    throw new Error(`Bluetooth permission/unavailable: ${e?.message ?? e}`);
+  }
+  if (!enabled) {
+    throw new Error('Bluetooth is off. Turn it on in Control Centre / Settings.');
+  }
+}
+
 function extractServiceData(result: ScanResult): Uint8Array | null {
   const sd = result.serviceData?.[BTHOME_SERVICE_UUID_128];
   if (!sd) return null;

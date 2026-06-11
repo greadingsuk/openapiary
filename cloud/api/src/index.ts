@@ -20,6 +20,7 @@
 //   GET    /v1/admin/fleet/readings      cross-user readings (region/time window)
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 type Bindings = {
     DB: D1Database;
@@ -47,6 +48,20 @@ type Reading = {
 type Variables = { user: User };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// Global CORS for all API routes. The app runs inside a Capacitor WebView
+// (origin capacitor://localhost / ionic://localhost / http://localhost), so
+// cross-origin requests need CORS headers or WKWebView throws "Load failed".
+// The X-API-Key / X-Admin-Key header is the security boundary, not the origin.
+app.use(
+    "/v1/*",
+    cors({
+        origin: "*",
+        allowHeaders: ["Content-Type", "X-API-Key", "X-Admin-Key"],
+        allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
+        maxAge: 86400,
+    })
+);
 
 async function sha256Hex(s: string): Promise<string> {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
