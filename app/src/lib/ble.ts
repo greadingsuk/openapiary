@@ -14,17 +14,33 @@ export interface OAAdvert extends BTHomeReading {
 
 let initialised = false;
 
+/** Reject if a native call doesn't settle in `ms` — prevents the UI hanging forever. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 async function ensureInit() {
   if (initialised) return;
-  await BleClient.initialize({ androidNeverForLocation: true });
+  await withTimeout(
+    BleClient.initialize({ androidNeverForLocation: true }),
+    8000,
+    'Bluetooth initialise',
+  );
   initialised = true;
 }
 
 /**
- * Force the BLE stack to initialise and confirm the radio is enabled.
- * On iOS, calling initialize() then isEnabled() triggers the CoreBluetooth
- * permission prompt the first time and adds the toggle to iOS Settings.
- * Throws a human-readable error the UI can display.
+ * Initialise the BLE stack. We deliberately do NOT gate on isEnabled():
+ * on iOS isEnabled() can block on the CoreBluetooth state callback and never
+ * resolve. The scan call itself triggers the iOS permission prompt and will
+ * reject with a readable error if Bluetooth is off or unauthorised.
+ * isEnabled() is consulted only as a best-effort hint, with its own timeout.
  */
 export async function ensureBleReady(): Promise<void> {
   try {
@@ -32,14 +48,16 @@ export async function ensureBleReady(): Promise<void> {
   } catch (e: any) {
     throw new Error(`BLE init failed: ${e?.message ?? e}`);
   }
-  let enabled = false;
+  // Best-effort radio check — never let it block the scan.
   try {
-    enabled = await BleClient.isEnabled();
+    const enabled = await withTimeout(BleClient.isEnabled(), 3000, 'Bluetooth check');
+    if (!enabled) {
+      throw new Error('Bluetooth is off. Turn it on in Control Centre / Settings.');
+    }
   } catch (e: any) {
-    throw new Error(`Bluetooth permission/unavailable: ${e?.message ?? e}`);
-  }
-  if (!enabled) {
-    throw new Error('Bluetooth is off. Turn it on in Control Centre / Settings.');
+    // If the check itself timed out, fall through and let the scan try anyway.
+    if (String(e?.message).includes('is off')) throw e;
+    // otherwise ignore the hint and proceed to scan
   }
 }
 
@@ -52,7 +70,8 @@ function extractServiceData(result: ScanResult): Uint8Array | null {
 
 export async function startScan(onAdvert: (a: OAAdvert) => void): Promise<void> {
   await ensureInit();
-  await BleClient.requestLEScan(
+  await withTimeout(
+    BleClient.requestLEScan(
     { services: [BTHOME_SERVICE_UUID_128], allowDuplicates: true },
     (result) => {
       const name = result.localName ?? result.device.name ?? '';
@@ -69,6 +88,9 @@ export async function startScan(onAdvert: (a: OAAdvert) => void): Promise<void> 
         ts: Date.now(),
       });
     },
+  ),
+    10000,
+    'Start scan',
   );
 }
 
