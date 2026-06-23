@@ -2,7 +2,7 @@
 // Target: Seeed XIAO nRF52840 (Standard, NOT Sense)
 // Design: see docs/todo-plan.md and the original migration plan §4.
 //
-// Wake cycle (every 15 min):
+// Wake cycle (every 30 s during app dev; will move to adaptive 1-min day / 5-min night):
 //   sleep (FreeRTOS idle + WFE) -> HX711 read -> battery read -> BLE advert burst -> sleep
 //
 // Power model note:
@@ -21,6 +21,7 @@
 #include "hx711_helper.h"
 #include "bthome.h"
 #include "persist.h"
+#include "gatt_config.h"
 
 // Provided by cal_mode.cpp
 extern void enterCalibrationMode();
@@ -32,19 +33,41 @@ static const uint8_t PIN_VBAT_EN   = 14;   // P0.14 - drive LOW to enable divide
 // PIN_VBAT (P0.31) is provided by the Adafruit core as PIN_VBAT
 
 // ---- Timing ----
-static const uint32_t WAKE_INTERVAL_MS = 15UL * 60UL * 1000UL;  // 15 minutes
+// Adaptive cadence (docs/todo-plan.md §3a): 1-min during daylight, 5-min at
+// night to conserve battery. Falls back to 1-min until the app seeds the time.
+static const uint32_t WAKE_DAY_MS   = 60UL * 1000UL;            // 06:00-22:00 local
+static const uint32_t WAKE_NIGHT_MS = 5UL * 60UL * 1000UL;      // 22:00-06:00 local
+static const uint32_t PAIRING_WINDOW_MS = 60UL * 1000UL;        // connectable window after boot
 static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets across ch 37/38/39
 static const uint8_t  PERSIST_EVERY_N_CYCLES = 16;               // limit flash wear
 
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0 };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
+
+// Returns the wake interval for the current local time (day vs night).
+static uint32_t nextWakeIntervalMs() {
+    int h = OAConfig::localHour();
+    if (h < 0) return WAKE_DAY_MS;            // time unknown → assume daytime
+    return (h >= 6 && h < 22) ? WAKE_DAY_MS : WAKE_NIGHT_MS;
+}
+
+// Resolve the BLE local name: persisted friendly name if set, else OA-XXXX.
+static void resolveLocalName(char* out, size_t cap) {
+    if (g_state.name[0] != '\0') {
+        strncpy(out, g_state.name, cap - 1);
+        out[cap - 1] = '\0';
+    } else {
+        bthome_local_name(out, cap);
+    }
+}
 
 // Forward decls
 float readBatteryVoltage();
 static bool vbusPresent();
 static float readDieTempC();
 static int   batteryPctFromVoltage(float v);
+static void  runPairingWindow();
 
 void setup() {
     // Snapshot + clear the reset reason BEFORE anything else touches it.
@@ -65,13 +88,55 @@ void setup() {
     // 3. Enable DCDC regulator — drops idle current from ~5 µA to ~2.5 µA.
     sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE);
 
-    // 4. Load persisted cal/tare/packetId/bootCount and bump bootCount.
+    // 4. Load persisted cal/tare/packetId/bootCount/name/tz and bump bootCount.
     OAPersist::begin();
     OAPersist::load(g_state);
     g_state.bootCount++;
     OAPersist::save(g_state);   // always save on boot so we never lose the count
 
     hx711_begin(PIN_HX711_DT, PIN_HX711_SCK, g_state.calFactor, g_state.tareOffset);
+
+    // 5. Register the Config GATT service and run a short connectable pairing
+    //    window so the app can set the name + seed the clock. After it closes,
+    //    loop() resumes the low-power advert-only behaviour.
+    OAConfig::begin(&g_state);
+    runPairingWindow();
+}
+
+// Advertise connectably (with the Config service) for PAIRING_WINDOW_MS so the
+// phone can connect to rename / set the time. Persists any change it received.
+static void runPairingWindow() {
+    char name[17];
+    resolveLocalName(name, sizeof(name));
+    Bluefruit.setName(name);
+
+    Bluefruit.Advertising.stop();
+    Bluefruit.Advertising.clearData();
+    Bluefruit.ScanResponse.clearData();
+    Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+    Bluefruit.Advertising.addService(OAConfig::service());
+    Bluefruit.ScanResponse.addName();
+    Bluefruit.Advertising.restartOnDisconnect(true);
+    Bluefruit.Advertising.setInterval(32, 244);   // 20 ms fast / 152.5 ms slow
+    Bluefruit.Advertising.setFastTimeout(30);
+    Bluefruit.Advertising.start(0);               // we time the window ourselves
+
+    uint32_t end = millis() + PAIRING_WINDOW_MS;
+    while ((int32_t)(end - millis()) > 0) {
+        delay(100);
+        if (OAConfig::takeDirty()) {
+            OAPersist::save(g_state);             // flush name / tz as soon as written
+            // A new name should take effect immediately on the next advert.
+            resolveLocalName(name, sizeof(name));
+            Bluefruit.setName(name);
+        }
+    }
+
+    Bluefruit.Advertising.stop();
+    if (Bluefruit.connected()) {
+        Bluefruit.disconnect(Bluefruit.connHandle());
+    }
+    Bluefruit.Advertising.restartOnDisconnect(false);
 }
 
 void loop() {
@@ -108,9 +173,9 @@ void loop() {
     );
 
     // 4. Advertise for 300 ms
-    // Friendly name "OA-XXXX" must be set BEFORE addName().
-    char name[12];
-    bthome_local_name(name, sizeof(name));
+    // Friendly name (custom or "OA-XXXX") must be set BEFORE addName().
+    char name[17];
+    resolveLocalName(name, sizeof(name));
     Bluefruit.setName(name);
 
     Bluefruit.Advertising.clearData();
@@ -128,20 +193,26 @@ void loop() {
         cycleCount = 0;
     }
 
-    // 6. Sleep until next cycle (FreeRTOS idle -> __WFE; see header comment)
-    delay(WAKE_INTERVAL_MS);
+    // 6. Sleep until next cycle (FreeRTOS idle -> __WFE; see header comment).
+    //    Interval adapts to local time of day once the app has seeded the clock.
+    delay(nextWakeIntervalMs());
 }
 
 float readBatteryVoltage() {
     pinMode(PIN_VBAT_EN, OUTPUT);
     digitalWrite(PIN_VBAT_EN, LOW);  // enable divider
-    delay(2);
+    delay(5);
+    analogReference(AR_INTERNAL_3_0);  // explicit ref — SAADC needs it under SoftDevice
     analogReadResolution(12);
+    (void)analogRead(PIN_VBAT);        // discard first sample (SAADC settle)
     uint32_t acc = 0;
-    for (int i = 0; i < 20; i++) acc += analogRead(PIN_VBAT);
+    for (int i = 0; i < 8; i++) {
+        acc += analogRead(PIN_VBAT);
+        delay(1);
+    }
     digitalWrite(PIN_VBAT_EN, HIGH); // disable divider to save current
     pinMode(PIN_VBAT_EN, INPUT);
-    float adc = acc / 20.0f;
+    float adc = acc / 8.0f;
     // 12-bit ADC, 3.0 V ref, divider 1510k/510k -> Vbat = adc * 3.0 / 4095 * (1510+510)/510
     return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f);
 }
@@ -153,15 +224,13 @@ static bool vbusPresent() {
     return (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
 }
 
-// Read the nRF52840's on-die temperature sensor. ~±4°C absolute accuracy, fine for
-// trend tracking (catches a hive baking in sun, or the device dying of cold).
+// Read the nRF52840's on-die temperature sensor via SoftDevice.
+// Direct register access (NRF_TEMP->TASKS_START / EVENTS_DATARDY) hangs forever
+// when SoftDevice is running because the radio owns the TEMP peripheral.
+// sd_temp_get() returns the same raw 0.25°C-step value.
 static float readDieTempC() {
-    NRF_TEMP->TASKS_START = 1;
-    // Datasheet: data ready in ~36 µs. Bounded loop avoids any chance of a hang.
-    for (int i = 0; i < 1000 && !NRF_TEMP->EVENTS_DATARDY; i++) { /* spin */ }
-    NRF_TEMP->EVENTS_DATARDY = 0;
-    int32_t raw = (int32_t)NRF_TEMP->TEMP;   // signed, 0.25°C steps
-    NRF_TEMP->TASKS_STOP = 1;
+    int32_t raw = 0;
+    if (sd_temp_get(&raw) != NRF_SUCCESS) return 0.0f;
     return raw * 0.25f;
 }
 

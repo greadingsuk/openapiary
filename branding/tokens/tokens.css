@@ -1,0 +1,148 @@
+/* =====================================================================
+   Open Apiary — Design Tokens (CSS Custom Properties)
+   ---------------------------------------------------------------------
+   Single source of truth for the Open Apiary brand: warm honey palette
+   + kraft/parchment neutrals (from the OA bee + honeycomb logo) on a
+   bright, paper-light canvas with soft glass surfaces and honeycomb dials.
+
+   LIGHT-ONLY. There is no dark theme; :root is the one and only theme.
+
+   These tokens are framework-agnostic. The app (Tailwind v4) imports the
+   matching @theme map in tailwind-theme.css; the cloud dashboard can
+   @import this file directly.
+   ===================================================================== */
+
+:root {
+  /* ---- Honey accent ramp (brand hue — interactive / data / glow) ---- */
+  --oa-honey-50:  #fff8e6;
+  --oa-honey-100: #ffe9a8;
+  --oa-honey-200: #ffd76b;
+  --oa-honey-300: #ffc233; /* glow / highlight */
+  --oa-honey-400: #f5a91f; /* PRIMARY accent (fills / buttons) */
+  --oa-honey-500: #d98a0c;
+  --oa-honey-600: #a96809; /* honey text on light — AA large */
+  --oa-honey-700: #774905; /* honey text on light — AA body */
+  --oa-honey-800: #4d2f03;
+
+  /* ---- Kraft / parchment neutral ramp (from logo paper + ink) ------- */
+  --oa-kraft-50:  #f5efe2;
+  --oa-kraft-100: #e8dcc4;
+  --oa-kraft-200: #d8c7a6;
+  --oa-kraft-300: #c9b896;
+  --oa-kraft-400: #a8966e;
+  --oa-kraft-500: #8a7b5e;
+  --oa-kraft-600: #5e523c;
+  --oa-kraft-700: #3a3328;
+
+  /* ---- Surfaces (light, paper feel) --------------------------------- */
+  --oa-surface-base: #fffdf7; /* app/page background */
+  --oa-surface-1:    #fff8e6; /* cards / sheets (honey-50 paper) */
+  --oa-surface-2:    #f5efe2; /* raised panels (kraft-50) */
+  --oa-surface-3:    #e8dcc4; /* popovers / inputs (kraft-100) */
+
+  /* ---- Text (dark ink on light) ------------------------------------- */
+  --oa-text-primary:   #1a1410; /* 17:1 on surface-1 — AAA */
+  --oa-text-muted:     #5e523c; /* 7.2:1 — AAA */
+  --oa-text-subtle:    #6e6047; /* 5.8:1 — AA (axis labels, captions) */
+  --oa-text-on-accent: #14100c; /* dark ink on honey buttons — 9.5:1 */
+
+  /* ---- Glass (translucent surfaces + transparent dials) ------------- */
+  --oa-glass-fill:      rgba(26, 20, 16, 0.04);
+  --oa-glass-fill-2:    rgba(26, 20, 16, 0.06);
+  --oa-glass-border:    rgba(26, 20, 16, 0.12);
+  --oa-glass-highlight: rgba(245, 169, 31, 0.22);
+  --oa-glass-blur:      18px;
+  --oa-glass-blur-lg:   24px;
+
+  /* ---- Data-viz series (darkened for legibility on light) ----------- */
+  --oa-data-weight:   #b8780a; /* deep honey */
+  --oa-data-weight-2: #8a5a06;
+  --oa-data-battery:  #5f9145; /* deep sage */
+  --oa-data-temp:     #d2581f; /* deep terracotta */
+  --oa-data-humidity: #3f8a83; /* deep teal */
+  --oa-data-alert:    #cf3a3f; /* deep red */
+  --oa-data-grid:     rgba(26, 20, 16, 0.10);
+  --oa-data-axis:     #6e6047;
+
+  /* ---- Semantic ------------------------------------------------------ */
+  --oa-success: #5f9145;
+  --oa-warning: #c47d0a;
+  --oa-danger:  #cf3a3f;
+  --oa-info:    #5e523c;
+
+  /* ---- Elevation (soft warm shadows for light surfaces) ------------- */
+  --oa-shadow-1: 0 1px 2px rgba(58, 51, 40, 0.12);
+  --oa-shadow-2: 0 4px 12px rgba(58, 51, 40, 0.14);
+  --oa-shadow-3: 0 12px 32px rgba(58, 51, 40, 0.16);
+  --oa-glow:     0 0 24px rgba(245, 169, 31, 0.30); /* honey glow for dials */
+
+  /* ---- Radii --------------------------------------------------------- */
+  --oa-radius-sm: 8px;
+  --oa-radius-md: 14px;
+  --oa-radius-lg: 22px;
+  --oa-radius-xl: 32px;
+  --oa-radius-pill: 999px;
+
+  /* ---- Spacing (4 / 8 grid) ----------------------------------------- */
+  --oa-space-1: 4px;
+  --oa-space-2: 8px;
+  --oa-space-3: 12px;
+  --oa-space-4: 16px;
+  --oa-space-5: 24px;
+  --oa-space-6: 32px;
+  --oa-space-7: 48px;
+  --oa-space-8: 64px;
+
+  /* ---- Typography ---------------------------------------------------- */
+  --oa-font-display: "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --oa-font-body:    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --oa-font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+  --oa-text-2xs: 0.6875rem; /* 11px */
+  --oa-text-xs:  0.75rem;   /* 12px */
+  --oa-text-sm:  0.875rem;  /* 14px */
+  --oa-text-md:  1rem;      /* 16px — base */
+  --oa-text-lg:  1.25rem;   /* 20px */
+  --oa-text-xl:  1.5rem;    /* 24px */
+  --oa-text-2xl: 2rem;      /* 32px */
+  --oa-text-3xl: 2.75rem;   /* 44px */
+  --oa-text-dial: 3.5rem;   /* 56px — large dial numerals */
+
+  --oa-weight-regular: 400;
+  --oa-weight-medium:  500;
+  --oa-weight-semibold: 600;
+  --oa-weight-bold:    700;
+
+  --oa-leading-tight: 1.15;
+  --oa-leading-snug:  1.3;
+  --oa-leading-normal: 1.5;
+
+  /* ---- Motion -------------------------------------------------------- */
+  --oa-ease-standard:  cubic-bezier(0.4, 0, 0.2, 1);
+  --oa-ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --oa-ease-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+  --oa-duration-fast: 150ms;
+  --oa-duration-base: 250ms;
+  --oa-duration-slow: 400ms;
+  --oa-duration-dial: 800ms; /* dial fill animation */
+
+  /* ---- Texture (paper/canvas grain from logo) ----------------------- */
+  /* Subtle tiled SVG noise. Use SPARINGLY on hero / brand surfaces only.
+     Disabled for prefers-reduced-motion / data-saver (see bottom of file). */
+  --oa-texture-grain:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+  --oa-texture-opacity: 0.05; /* keep low on light surfaces */
+}
+
+/* =====================================================================
+   Accessibility: disable texture + heavy motion when requested
+   ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --oa-duration-fast: 0ms;
+    --oa-duration-base: 0ms;
+    --oa-duration-slow: 0ms;
+    --oa-duration-dial: 0ms;
+    --oa-texture-opacity: 0;
+  }
+}

@@ -105,3 +105,103 @@ export async function stopScan(): Promise<void> {
     // ignore - scan may have already stopped
   }
 }
+
+// ---------------------------------------------------------------------------
+// Device interaction (rename + time sync) over a short GATT connection.
+//
+// The firmware exposes a connectable "OA Config" service during a ~60 s pairing
+// window after boot. We connect, write the new name and/or the current time,
+// then disconnect so the scale drops back to advert-only, low-power mode.
+//
+// These UUIDs MUST match firmware/src (see the GATT service definition).
+// ---------------------------------------------------------------------------
+
+export const OA_CONFIG_SERVICE = '0a000000-0a51-4000-b000-000000000001';
+export const OA_CHAR_NAME      = '0a000001-0a51-4000-b000-000000000001'; // utf-8, max 16 bytes
+export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 bytes: u32 epoch LE + i16 tzOffsetMin LE
+
+function textToDataView(s: string): DataView {
+  const bytes = new TextEncoder().encode(s);
+  const dv = new DataView(new ArrayBuffer(bytes.length));
+  bytes.forEach((b, i) => dv.setUint8(i, b));
+  return dv;
+}
+
+function timeToDataView(epochSec: number, tzOffsetMin: number): DataView {
+  const dv = new DataView(new ArrayBuffer(8));
+  dv.setUint32(0, epochSec >>> 0, true);   // little-endian
+  dv.setInt16(4, tzOffsetMin, true);
+  // bytes 6-7 reserved / zero
+  return dv;
+}
+
+/**
+ * Connect to a scale during its pairing window and push name and/or time.
+ * Always disconnects afterwards. Throws a readable error if the window is
+ * closed (the scale only accepts connections for ~60 s after boot/wake).
+ */
+export async function configureDevice(
+  deviceId: string,
+  opts: { name?: string; pushTime?: boolean; tzOffsetMin?: number },
+): Promise<void> {
+  await ensureInit();
+  await withTimeout(
+    BleClient.connect(deviceId, (id) => {
+      // onDisconnect — nothing to do; surfaced via the action result.
+      void id;
+    }),
+    15000,
+    'Connect to scale',
+  );
+  try {
+    if (opts.pushTime) {
+      const tz = opts.tzOffsetMin ?? -new Date().getTimezoneOffset();
+      const epochSec = Math.floor(Date.now() / 1000);
+      await withTimeout(
+        BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME, timeToDataView(epochSec, tz)),
+        8000,
+        'Write time',
+      );
+    }
+    if (opts.name != null) {
+      const trimmed = opts.name.slice(0, 16);
+      await withTimeout(
+        BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_NAME, textToDataView(trimmed)),
+        8000,
+        'Write name',
+      );
+    }
+  } finally {
+    try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+  }
+}
+
+/**
+ * Briefly scan to resolve the live BLE deviceId for a known scale name
+ * (e.g. "OA-ABCB"). Resolves null if the scale isn't heard within `ms`
+ * (asleep / out of range). Used before a rename so we can connect to it.
+ */
+export async function findDeviceId(deviceName: string, ms = 6000): Promise<string | null> {
+  await ensureInit();
+  const wanted = deviceName.toLowerCase();
+  return new Promise<string | null>((resolve) => {
+    let done = false;
+    const finish = (id: string | null) => {
+      if (done) return;
+      done = true;
+      void BleClient.stopLEScan().catch(() => undefined);
+      resolve(id);
+    };
+    const timer = setTimeout(() => finish(null), ms);
+    BleClient.requestLEScan(
+      { services: [BTHOME_SERVICE_UUID_128], allowDuplicates: false },
+      (result) => {
+        const name = (result.localName ?? result.device.name ?? '').toLowerCase();
+        if (name === wanted) {
+          clearTimeout(timer);
+          finish(result.device.deviceId);
+        }
+      },
+    ).catch(() => { clearTimeout(timer); finish(null); });
+  });
+}

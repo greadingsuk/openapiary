@@ -1,0 +1,100 @@
+/* =====================================================================
+   Open Apiary — Tailwind v4 theme map
+   ---------------------------------------------------------------------
+   Drop-in @theme that exposes the OA design tokens as Tailwind utilities
+   (bg-surface-1, text-honey-400, font-display, rounded-oa-lg, etc.).
+
+   LIGHT-ONLY. Import AFTER `@import "tailwindcss";` in your CSS entry:
+
+       @import "tailwindcss";
+       @import "./tailwind-theme.css";
+
+   Mirrors branding/tokens/tokens.css. Keep the two in sync.
+   ===================================================================== */
+
+@theme {
+  /* ---- Honey ramp ---- */
+  --color-honey-50:  #fff8e6;
+  --color-honey-100: #ffe9a8;
+  --color-honey-200: #ffd76b;
+  --color-honey-300: #ffc233;
+  --color-honey-400: #f5a91f;
+  --color-honey-500: #d98a0c;
+  --color-honey-600: #a96809;
+  --color-honey-700: #774905;
+  --color-honey-800: #4d2f03;
+
+  /* ---- Kraft / parchment neutral ramp ---- */
+  --color-kraft-50:  #f5efe2;
+  --color-kraft-100: #e8dcc4;
+  --color-kraft-200: #d8c7a6;
+  --color-kraft-300: #c9b896;
+  --color-kraft-400: #a8966e;
+  --color-kraft-500: #8a7b5e;
+  --color-kraft-600: #5e523c;
+  --color-kraft-700: #3a3328;
+
+  /* ---- Surfaces (light) ---- */
+  --color-surface-base: #fffdf7;
+  --color-surface-1:    #fff8e6;
+  --color-surface-2:    #f5efe2;
+  --color-surface-3:    #e8dcc4;
+
+  /* ---- Text (dark ink) ---- */
+  --color-ink:        #1a1410;
+  --color-ink-muted:  #5e523c;
+  --color-ink-subtle: #6e6047;
+  --color-on-accent:  #14100c;
+
+  /* ---- Data-viz ---- */
+  --color-data-weight:   #b8780a;
+  --color-data-weight-2: #8a5a06;
+  --color-data-battery:  #5f9145;
+  --color-data-temp:     #d2581f;
+  --color-data-humidity: #3f8a83;
+  --color-data-alert:    #cf3a3f;
+
+  /* ---- Semantic ---- */
+  --color-success: #5f9145;
+  --color-warning: #c47d0a;
+  --color-danger:  #cf3a3f;
+  --color-info:    #5e523c;
+
+  /* ---- Legacy aliases (existing app markup uses comb-bg / comb-fg).
+     Updated to the light palette. Migrate components to the surface-*/
+  /*    and ink tokens above, then remove these. ---- */
+  --color-comb-bg: #fff8e6;
+  --color-comb-fg: #1a1410;
+
+  /* ---- Fonts ---- */
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* ---- Radii ---- */
+  --radius-oa-sm: 8px;
+  --radius-oa-md: 14px;
+  --radius-oa-lg: 22px;
+  --radius-oa-xl: 32px;
+
+  /* ---- Shadows ---- */
+  --shadow-oa-1: 0 1px 2px rgba(58, 51, 40, 0.12);
+  --shadow-oa-2: 0 4px 12px rgba(58, 51, 40, 0.14);
+  --shadow-oa-3: 0 12px 32px rgba(58, 51, 40, 0.16);
+}
+
+/* ---------------------------------------------------------------------
+   Glass surface utility — translucent card / transparent dial backing.
+   ------------------------------------------------------------------- */
+.oa-glass {
+  background: rgba(26, 20, 16, 0.04);
+  border: 1px solid rgba(26, 20, 16, 0.12);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-oa-2);
+}
+
+/* Honeycomb cell — hexagon clip used for stat tiles / dial wells. */
+.hex-cell {
+  clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+}

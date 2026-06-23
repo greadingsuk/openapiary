@@ -168,6 +168,16 @@ app.post("/v1/account/register", async (c) => {
     return c.json({ user_id: id, api_key: rawKey });
 });
 
+// --- GET /v1/me — identity of the caller (regular user key) ---
+app.get("/v1/me", async (c) => {
+    const user = c.get("user");
+    return c.json({
+        id: user.id,
+        email: user.email,
+        is_admin: !!user.is_admin,
+    });
+});
+
 // --- POST /v1/readings ---
 app.post("/v1/readings", async (c) => {
     const user = c.get("user");
@@ -275,6 +285,30 @@ app.patch("/v1/hives/:id", async (c) => {
 // --- ADMIN: fleet stats ---
 app.get("/v1/admin/fleet/stats", async (c) => {
     const since = Date.now() - 24 * 60 * 60 * 1000;
+    const userId = c.req.query("user");
+
+    if (userId) {
+        const stats = await c.env.DB.batch([
+            c.env.DB.prepare(`SELECT COUNT(*) AS n FROM hives WHERE user_id = ?`).bind(userId),
+            c.env.DB.prepare(
+                `SELECT COUNT(*) AS n FROM readings r JOIN hives h ON h.id = r.hive_id WHERE h.user_id = ?`
+            ).bind(userId),
+            c.env.DB.prepare(
+                `SELECT COUNT(*) AS n FROM readings r JOIN hives h ON h.id = r.hive_id WHERE h.user_id = ? AND r.ts >= ?`
+            ).bind(userId, since),
+            c.env.DB.prepare(
+                `SELECT COUNT(DISTINCT r.hive_id) AS n FROM readings r JOIN hives h ON h.id = r.hive_id WHERE h.user_id = ? AND r.ts >= ?`
+            ).bind(userId, since),
+        ]);
+        return c.json({
+            users: 1,
+            hives: (stats[0].results?.[0] as any)?.n ?? 0,
+            readings_total: (stats[1].results?.[0] as any)?.n ?? 0,
+            readings_24h: (stats[2].results?.[0] as any)?.n ?? 0,
+            hives_active_24h: (stats[3].results?.[0] as any)?.n ?? 0,
+        });
+    }
+
     const stats = await c.env.DB.batch([
         c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`),
         c.env.DB.prepare(`SELECT COUNT(*) AS n FROM hives WHERE user_id IS NOT NULL`),
@@ -291,14 +325,42 @@ app.get("/v1/admin/fleet/stats", async (c) => {
     });
 });
 
+// --- ADMIN: whoami — confirms the admin key + a label for the header ---
+app.get("/v1/admin/whoami", async (c) => {
+    return c.json({ is_admin: true, label: "Admin", scope: "fleet" });
+});
+
+// --- ADMIN: list users (for the persona switcher) ---
+app.get("/v1/admin/users", async (c) => {
+    const { results } = await c.env.DB.prepare(
+        `SELECT u.id, u.email, u.created_at, u.is_admin,
+                COUNT(h.id) AS hive_count
+         FROM users u
+         LEFT JOIN hives h ON h.user_id = u.id
+         GROUP BY u.id
+         ORDER BY u.created_at DESC
+         LIMIT 5000`
+    ).all();
+    return c.json({ users: results });
+});
+
 // --- ADMIN: anonymised fleet hives ---
 app.get("/v1/admin/fleet/hives", async (c) => {
-    const { results } = await c.env.DB.prepare(
-        `SELECT id, created_at, public, lat, lon, region,
-                substr(user_id, 1, 8) AS user_prefix
-         FROM hives WHERE user_id IS NOT NULL
-         ORDER BY created_at DESC LIMIT 5000`
-    ).all();
+    const userId = c.req.query("user");
+    const stmt = userId
+        ? c.env.DB.prepare(
+              `SELECT id, created_at, public, lat, lon, region,
+                      substr(user_id, 1, 8) AS user_prefix
+               FROM hives WHERE user_id = ?
+               ORDER BY created_at DESC LIMIT 5000`
+          ).bind(userId)
+        : c.env.DB.prepare(
+              `SELECT id, created_at, public, lat, lon, region,
+                      substr(user_id, 1, 8) AS user_prefix
+               FROM hives WHERE user_id IS NOT NULL
+               ORDER BY created_at DESC LIMIT 5000`
+          );
+    const { results } = await stmt.all();
     return c.json({ hives: results });
 });
 
@@ -307,20 +369,31 @@ app.get("/v1/admin/fleet/readings", async (c) => {
     const from = Number(c.req.query("from") ?? Date.now() - 7 * 24 * 60 * 60 * 1000);
     const to = Number(c.req.query("to") ?? Date.now());
     const region = c.req.query("region");
+    const userId = c.req.query("user");
 
-    const stmt = region
-        ? c.env.DB.prepare(
-              `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, h.region, h.lat, h.lon
-               FROM readings r JOIN hives h ON h.id = r.hive_id
-               WHERE h.region = ? AND r.ts BETWEEN ? AND ?
-               ORDER BY r.ts ASC LIMIT 50000`
-          ).bind(region, from, to)
-        : c.env.DB.prepare(
-              `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, h.region, h.lat, h.lon
-               FROM readings r JOIN hives h ON h.id = r.hive_id
-               WHERE r.ts BETWEEN ? AND ?
-               ORDER BY r.ts ASC LIMIT 50000`
-          ).bind(from, to);
+    let stmt;
+    if (userId) {
+        stmt = c.env.DB.prepare(
+            `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, h.region, h.lat, h.lon
+             FROM readings r JOIN hives h ON h.id = r.hive_id
+             WHERE h.user_id = ? AND r.ts BETWEEN ? AND ?
+             ORDER BY r.ts ASC LIMIT 50000`
+        ).bind(userId, from, to);
+    } else if (region) {
+        stmt = c.env.DB.prepare(
+            `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, h.region, h.lat, h.lon
+             FROM readings r JOIN hives h ON h.id = r.hive_id
+             WHERE h.region = ? AND r.ts BETWEEN ? AND ?
+             ORDER BY r.ts ASC LIMIT 50000`
+        ).bind(region, from, to);
+    } else {
+        stmt = c.env.DB.prepare(
+            `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, h.region, h.lat, h.lon
+             FROM readings r JOIN hives h ON h.id = r.hive_id
+             WHERE r.ts BETWEEN ? AND ?
+             ORDER BY r.ts ASC LIMIT 50000`
+        ).bind(from, to);
+    }
     const { results } = await stmt.all();
     return c.json({ readings: results });
 });

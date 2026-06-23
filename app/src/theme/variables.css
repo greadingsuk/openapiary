@@ -1,2 +1,199 @@
-/* For information on how to create your own theme, please refer to:
-http://ionicframework.com/docs/theming/ */
+/* Open Apiary — Ionic theme bridge.
+ * Maps Ionic's CSS variables onto the brand tokens defined in tailwind.css / the
+ * style guide (branding/style-guide.md). Light theme only — warm honey + kraft.
+ * Keep colour values in sync with branding/tokens/tokens.css. */
+
+:root {
+  /* ---- Brand palette (mirrors tailwind @theme) ---- */
+  --oa-honey-50:  #fff8e6;
+  --oa-honey-100: #ffe9a8;
+  --oa-honey-200: #ffd76b;
+  --oa-honey-300: #ffc233;
+  --oa-honey-400: #f5a91f;
+  --oa-honey-500: #d98a0c;
+  --oa-honey-600: #a96809;
+  --oa-honey-700: #774905;
+  --oa-honey-800: #4d2f03;
+
+  --oa-kraft-50:  #f5efe2;
+  --oa-kraft-100: #e8dcc4;
+  --oa-kraft-200: #d8c7a6;
+  --oa-kraft-300: #c9b896;
+  --oa-kraft-400: #a8966e;
+  --oa-kraft-500: #8a7b5e;
+  --oa-kraft-600: #5e523c;
+  --oa-kraft-700: #3a3328;
+
+  --oa-surface-base: #fffdf7;
+  --oa-surface-1:    #fff8e6;
+  --oa-surface-2:    #f5efe2;
+  --oa-surface-3:    #e8dcc4;
+
+  --oa-ink:        #1a1410;
+  --oa-ink-muted:  #5e523c;
+  --oa-ink-subtle: #6e6047;
+  --oa-on-accent:  #14100c;
+
+  --oa-glass-border: rgba(26, 20, 16, 0.12);
+
+  --oa-data-weight:  #b8780a;
+  --oa-data-battery: #5f9145;
+  --oa-data-temp:    #d2581f;
+  --oa-data-alert:   #cf3a3f;
+
+  /* ---- Fonts ---- */
+  --oa-font-display: "Sora", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --oa-font-body:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --oa-font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* ---- Elevation / glow ---- */
+  --oa-shadow-1: 0 1px 2px rgba(58, 51, 40, 0.10);
+  --oa-shadow-2: 0 4px 12px rgba(58, 51, 40, 0.14);
+  --oa-shadow-3: 0 10px 24px rgba(58, 51, 40, 0.18);
+  --oa-glow:     0 0 0 1px rgba(245, 169, 31, 0.25), 0 6px 22px rgba(245, 169, 31, 0.30);
+
+  /* ---------------------------------------------------------------- */
+  /* Ionic core variables                                              */
+  /* ---------------------------------------------------------------- */
+  --ion-font-family: var(--oa-font-body);
+
+  --ion-background-color: var(--oa-surface-base);
+  --ion-background-color-rgb: 255, 253, 247;
+
+  --ion-text-color: var(--oa-ink);
+  --ion-text-color-rgb: 26, 20, 16;
+
+  --ion-border-color: var(--oa-glass-border);
+
+  /* Stepped backgrounds Ionic derives for cards, items, ripples, etc. */
+  --ion-color-step-50:  #fbf4e3;
+  --ion-color-step-100: #f6eed9;
+  --ion-color-step-150: #f1e7cf;
+  --ion-color-step-200: #ece1c5;
+  --ion-color-step-250: #e7dbbb;
+  --ion-color-step-300: #e2d4b1;
+  --ion-color-step-350: #ddcea7;
+  --ion-color-step-400: #d8c89d;
+  --ion-color-step-450: #d3c293;
+  --ion-color-step-500: #cebb89;
+  --ion-color-step-550: #b6a577;
+  --ion-color-step-600: #9e8f66;
+  --ion-color-step-650: #877954;
+  --ion-color-step-700: #6f6343;
+  --ion-color-step-750: #574d31;
+  --ion-color-step-800: #403720;
+  --ion-color-step-850: #28220e;
+  --ion-color-step-900: var(--oa-ink);
+
+  /* Toolbars + items sit on the warm card surface, not pure white. */
+  --ion-toolbar-background: var(--oa-surface-1);
+  --ion-toolbar-color: var(--oa-honey-700);
+  --ion-toolbar-border-color: var(--oa-glass-border);
+
+  --ion-item-background: var(--oa-surface-1);
+  --ion-item-color: var(--oa-ink);
+  --ion-item-border-color: var(--oa-glass-border);
+
+  --ion-tab-bar-background: var(--oa-surface-1);
+  --ion-tab-bar-color: var(--oa-kraft-400);
+  --ion-tab-bar-color-selected: var(--oa-honey-600);
+
+  --ion-card-background: var(--oa-surface-1);
+
+  /* ---- Primary (honey) ---- */
+  --ion-color-primary: var(--oa-honey-400);
+  --ion-color-primary-rgb: 245, 169, 31;
+  --ion-color-primary-contrast: var(--oa-on-accent);
+  --ion-color-primary-contrast-rgb: 20, 16, 12;
+  --ion-color-primary-shade: var(--oa-honey-500);
+  --ion-color-primary-tint: var(--oa-honey-300);
+
+  /* ---- Secondary (kraft / muted) ---- */
+  --ion-color-secondary: var(--oa-kraft-600);
+  --ion-color-secondary-rgb: 94, 82, 60;
+  --ion-color-secondary-contrast: #ffffff;
+  --ion-color-secondary-contrast-rgb: 255, 255, 255;
+  --ion-color-secondary-shade: #524833;
+  --ion-color-secondary-tint: #6d614a;
+
+  /* ---- Tertiary (deep honey) ---- */
+  --ion-color-tertiary: var(--oa-honey-700);
+  --ion-color-tertiary-rgb: 119, 73, 5;
+  --ion-color-tertiary-contrast: #ffffff;
+  --ion-color-tertiary-contrast-rgb: 255, 255, 255;
+  --ion-color-tertiary-shade: #69400a;
+  --ion-color-tertiary-tint: #855b1e;
+
+  /* ---- Success / warning / danger (semantic tokens) ---- */
+  --ion-color-success: #5f9145;
+  --ion-color-success-rgb: 95, 145, 69;
+  --ion-color-success-contrast: #ffffff;
+  --ion-color-success-contrast-rgb: 255, 255, 255;
+  --ion-color-success-shade: #54803d;
+  --ion-color-success-tint: #6f9c58;
+
+  --ion-color-warning: #c47d0a;
+  --ion-color-warning-rgb: 196, 125, 10;
+  --ion-color-warning-contrast: #ffffff;
+  --ion-color-warning-contrast-rgb: 255, 255, 255;
+  --ion-color-warning-shade: #ac6e09;
+  --ion-color-warning-tint: #ca8a23;
+
+  --ion-color-danger: #cf3a3f;
+  --ion-color-danger-rgb: 207, 58, 63;
+  --ion-color-danger-contrast: #ffffff;
+  --ion-color-danger-contrast-rgb: 255, 255, 255;
+  --ion-color-danger-shade: #b63338;
+  --ion-color-danger-tint: #d44e52;
+
+  /* ---- Medium / light / dark (neutrals on a warm base) ---- */
+  --ion-color-medium: var(--oa-kraft-500);
+  --ion-color-medium-rgb: 138, 123, 94;
+  --ion-color-medium-contrast: #ffffff;
+  --ion-color-medium-contrast-rgb: 255, 255, 255;
+  --ion-color-medium-shade: #796c53;
+  --ion-color-medium-tint: #96886e;
+
+  --ion-color-light: var(--oa-surface-2);
+  --ion-color-light-rgb: 245, 239, 226;
+  --ion-color-light-contrast: var(--oa-ink);
+  --ion-color-light-contrast-rgb: 26, 20, 16;
+  --ion-color-light-shade: #d8d2c7;
+  --ion-color-light-tint: #f6f1e5;
+
+  --ion-color-dark: var(--oa-ink);
+  --ion-color-dark-rgb: 26, 20, 16;
+  --ion-color-dark-contrast: #ffffff;
+  --ion-color-dark-contrast-rgb: 255, 255, 255;
+  --ion-color-dark-shade: #17120e;
+  --ion-color-dark-tint: #312c28;
+}
+
+/* Headings and dial numerals use the display face; telemetry uses tabular mono. */
+h1, h2, h3, h4, h5, h6,
+ion-title {
+  font-family: var(--oa-font-display);
+}
+
+.oa-numeral {
+  font-family: var(--oa-font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.oa-mono {
+  font-family: var(--oa-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Honest-state helpers (style guide §11): never colour alone — always paired with a label. */
+.oa-muted { color: var(--oa-ink-muted); }
+.oa-subtle { color: var(--oa-ink-subtle); }
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

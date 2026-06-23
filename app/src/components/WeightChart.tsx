@@ -29,33 +29,39 @@ ChartJS.register(
 
 export interface WeightPoint {
     ts: number;
-    weight_kg: number | null;
+    weight_kg?: number | null;
     battery_v?: number | null;
+    temp_c?: number | null;
 }
 
 interface Props {
     readings: WeightPoint[];
-    /** "weight" | "battery" - default "weight" */
-    metric?: "weight" | "battery";
+    /** "weight" | "battery" | "temp" - default "weight" */
+    metric?: "weight" | "battery" | "temp";
 }
+
+const SERIES = {
+    weight: { label: "Weight (kg)", line: "#b8780a", fill: "rgba(245, 169, 31, 0.18)" },
+    battery: { label: "Battery (V)", line: "#5f9145", fill: "rgba(95, 145, 69, 0.15)" },
+    temp: { label: "Temp (°C)", line: "#d2581f", fill: "rgba(210, 88, 31, 0.15)" },
+} as const;
 
 export default function WeightChart({ readings, metric = "weight" }: Props) {
     const data = useMemo(() => {
         const points = readings.map((r) => ({
             x: r.ts,
-            y: metric === "weight" ? r.weight_kg : r.battery_v ?? null,
+            y: metric === "weight" ? (r.weight_kg ?? null)
+                : metric === "battery" ? (r.battery_v ?? null)
+                : (r.temp_c ?? null),
         }));
+        const s = SERIES[metric];
         return {
             datasets: [
                 {
-                    label: metric === "weight" ? "Weight (kg)" : "Battery (V)",
+                    label: s.label,
                     data: points,
-                    borderColor:
-                        metric === "weight" ? "rgb(245, 169, 31)" : "rgb(155, 205, 155)",
-                    backgroundColor:
-                        metric === "weight"
-                            ? "rgba(255, 194, 51, 0.2)"
-                            : "rgba(155, 205, 155, 0.15)",
+                    borderColor: s.line,
+                    backgroundColor: s.fill,
                     fill: true,
                     tension: 0.25,
                     pointRadius: 0,
@@ -69,28 +75,30 @@ export default function WeightChart({ readings, metric = "weight" }: Props) {
         () => ({
             responsive: true,
             maintainAspectRatio: false,
+            // Animate the draw on first paint only, not on every data refresh.
+            animation: { duration: 600 as number },
             interaction: { mode: "nearest" as const, intersect: false },
             scales: {
                 x: {
                     type: "time" as const,
                     time: { tooltipFormat: "PPpp", displayFormats: { hour: "MMM d HH:mm" } },
-                    ticks: { color: "#fff3d1", maxTicksLimit: 6 },
-                    grid: { color: "rgba(255,243,209,0.08)" },
+                    ticks: { color: "#6e6047", maxTicksLimit: 6 },
+                    grid: { color: "rgba(26,20,16,0.10)" },
                 },
                 y: {
-                    ticks: { color: "#fff3d1" },
-                    grid: { color: "rgba(255,243,209,0.08)" },
+                    ticks: { color: "#6e6047" },
+                    grid: { color: "rgba(26,20,16,0.10)" },
                 },
             },
             plugins: {
-                legend: { labels: { color: "#fff3d1" } },
+                legend: { labels: { color: "#1a1410" } },
             },
         }),
         []
     );
 
     if (!readings.length) {
-        return <div className="text-honey-100 opacity-60 text-sm">No data yet.</div>;
+        return <div className="oa-muted text-sm py-6 text-center">No data in this range yet.</div>;
     }
     return (
         <div style={{ height: 240 }}>

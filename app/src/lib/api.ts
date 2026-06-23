@@ -61,3 +61,17 @@ export async function getReadings(s: Settings, hiveId: string): Promise<HiveRead
   const j = await r.json();
   return j.readings ?? [];
 }
+
+/** Update a hive's mutable fields (currently the friendly name). */
+export async function patchHive(
+  s: Settings,
+  hiveId: string,
+  patch: { name?: string },
+): Promise<void> {
+  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}`, {
+    method: 'PATCH',
+    headers: headers(s),
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(`PATCH /v1/hives ${r.status}`);
+}

@@ -1,7 +1,7 @@
 # OpenApiary — To-Do Plan
 
 > **Status**: Live working document. Supersedes the original `migration-plan.md`.
-> **Last updated**: 2026-06-01
+> **Last updated**: 2026-06-08 (real sensors restored, SoftDevice traps documented, interval + naming + RTC plan added)
 > **Repo**: <https://github.com/greadingsuk/openapiary>
 > **Licence**: PolyForm Noncommercial 1.0.0
 
@@ -75,9 +75,9 @@ XIAO scale  ──BLE advert──►  Phone (Ionic app)
 ### Source files
 - ✅ `src/main.cpp` — wake cycle, VBUS-gated cal mode entry, DCDC enable, persist load + per-N-cycle save
 - ✅ `src/bthome.h` — payload builder + `OA-XXXX` local name from `NRF_FICR->DEVICEADDR`
-- ✅ `src/hx711_helper.h` — 10-sample median, spread diagnostic, friction-guard re-read, HX711 power_down/up, raw-read helpers for cal mode
+- ✅ `src/hx711_helper.h` — custom SoftDevice-safe bit-bang reader (`hx711_raw_read_timeout` with `noInterrupts()` per bit + 500 ms cap), 10-sample median, spread diagnostic, friction-guard re-read, power_down/up
 - ✅ `src/persist.h` — InternalFS / LittleFS wrapper, `/cal.txt` plain-text store
-- ✅ `src/cal_mode.cpp` — USB-CDC CLI: `tare`, `cal <kg>`, `show`, `save`, `reboot`
+- ✅ `src/cal_mode.cpp` — USB-CDC CLI: `tare`, `cal <kg>`, `show`, `save`, `ble [seconds]`, `reboot`, `exit`
 
 ### TODOs before flashing real hardware
 - ✅ **Sleep model decided** — stick with `delay()` → FreeRTOS idle → `__WFE` (~2-5 µA with DCDC). True System OFF rejected because it can't wake from RTC on nRF52840.
@@ -85,10 +85,164 @@ XIAO scale  ──BLE advert──►  Phone (Ionic app)
 - ✅ **InternalFS / LittleFS persistence** for `calFactor`, `tareOffset`, `packetId` (saved every 16 cycles to limit flash wear)
 - ✅ **Calibration CLI** in `cal_mode.cpp` over USB CDC at 115200 baud
 - ✅ **VBUS detect** at boot → enters cal mode if USB plugged in (skips advert loop)
+- ✅ **SoftDevice-safe HX711 driver** — bogde `wait_ready()` hangs because SoftDevice ISRs stretch SCK >60 µs which trips HX711 power-down. Replaced with custom bit-bang + `noInterrupts()` per bit + timeout.
+- ✅ **Real battery read** via `analogReference(AR_INTERNAL_3_0)` + 12-bit + discard-first sample + 8-sample average. Divider 1510 kΩ / 510 kΩ; verified on USB at 4.97 V (rail), needs revalidation on battery.
+- ✅ **Real die-temp read** via `sd_temp_get(&raw)` (NOT direct `NRF_TEMP` register polling — SoftDevice owns the peripheral and direct access hangs forever).
 - ⏭️ Hall-sensor cal trigger (needs optional A3144 — deferred)
 
 ### Power validation
-- ⬜ Once flashed, validate with Nordic PPK II — target <20 µA average
+- ⬜ Once on battery: validate with Nordic PPK II — target <20 µA average at the new 1-min interval (see §3a). If we miss target, fall back to the SwitchBot-style techniques in §3c.
+
+---
+
+---
+
+## 3a. Wake interval — change from 15 min to time-of-day adaptive
+
+**Decision:** 15 min default is far too coarse. New defaults:
+
+| Time of day | Wake interval | Rationale |
+|---|---|---|
+| 06:00 – 22:00 (local) | **1 minute** | Active hours: solar is charging, app/HA users expect near-live data |
+| 22:00 – 06:00 (local) | **5 minutes** | Night: no solar, nothing useful changes in a hive, conserve battery |
+
+Fallback (no time set): always 1 min. The waste is only 5× during 8 night hours,
+which is acceptable until first sync.
+
+### Does the nRF52840 know the time?
+
+The chip has a 32.768 kHz LFCLK driving three RTC peripherals (RTC0/1/2). It can
+measure **elapsed time** very accurately (drift ≈ ±50 ppm with the onboard XTAL
+— a few seconds per day). It does **not** know wall-clock time at boot — there
+is no battery-backed RTC and no GPS.
+
+Wall-clock time has to be **seeded** once after every full power loss. Options
+(in order of cost/complexity):
+
+1. **BLE GATT Current Time Service** during pairing in the Ionic app — free,
+   ~2 s extra connect time, re-sync opportunistically every time the user
+   opens the app and is in range. **Chosen for v1.**
+2. **USB CLI command** `time YYYY-MM-DD HH:MM:SS` — already trivial to add in
+   `cal_mode.cpp`. Useful as a debug fallback.
+3. **External RTC chip** (DS3231 + CR2032 backup) — +£3 BOM, +1 I²C wire, ±2
+   ppm. Overkill for a hive scale. Deferred to v2 if drift becomes a problem.
+
+### Sync model
+
+- Phone connects → writes `current_time` characteristic with Unix epoch (UTC).
+- Firmware stores it in RAM and snapshots `RTC2->COUNTER` at the same moment.
+- On every wake, compute current epoch = `seedEpoch + (RTC2->COUNTER - seedTick) * RTC_PERIOD_SEC`.
+- After ~30 days of no sync, drift ≈ ±2 min — still good enough for hourly
+  scheduling. Mark the time as "stale" in BTHome status if no sync in 30 days.
+- Local timezone offset stored alongside seed (e.g. UTC+1 BST) so the
+  06:00–22:00 window matches "daylight" without DST headaches.
+
+### Firmware TODO
+
+- ⬜ Replace `WAKE_INTERVAL_MS` constant with `nextWakeIntervalMs()` helper that
+  returns 60 000 or 300 000 based on local hour.
+- ⬜ Add small connectable GATT service exposed only during a short "pairing
+  window" (first 60 s after boot, or after a magnet swipe in v1.1):
+  - `0x2A2B` Current Time (writable)
+  - `0x2BB1` Display Name (custom, writable, max 16 chars; see §3b)
+  - On disconnect, drop back to advert-only.
+- ⬜ Persist `displayName`, `seedEpoch`, `seedTick`, `tzOffsetMinutes` in
+  `/cal.txt` (extend the existing OAPersist struct).
+
+---
+
+## 3b. Custom device name from the app
+
+Multiple Open Apiary scales will all show up as `OA-XXXX` in nRF Connect /
+Home Assistant — fine for unique IDs, terrible for humans ("is OA-ABCB the
+back-garden one or the apiary one?").
+
+**v1 plan:**
+
+- Firmware default: `OA-XXXX` (last 4 hex of MAC). Always available as the
+  underlying BLE identity.
+- Optional custom name: up to 16 ASCII chars, stored in `/name.txt` via
+  InternalFS. If present, used as the BLE local name in scan response
+  (`Bluefruit.setName()` is already called every wake cycle — just point it at
+  the custom name if set).
+- BTHome service-data UUID and the MAC stay the same → Home Assistant
+  auto-discovery still works.
+- Ionic app exposes a **Rename** action on the hive detail page:
+  - Opens a short BLE GATT connection to the scale (during the pairing window
+    above)
+  - Writes the new name to the `0x2BB1` characteristic
+  - Firmware persists it and immediately re-broadcasts with the new local name
+  - App also stores the same name locally so the list view is sensible even
+    when the scale is asleep
+
+**App TODO** (added to §5):
+
+- ⬜ "Rename" button on `HiveDetailPage` → BLE connect → write name characteristic → disconnect → update SQLite row.
+- ⬜ Show both the friendly name AND the `OA-XXXX` underneath, so users can still match by MAC if needed.
+
+---
+
+## 3c. SwitchBot-style ultra-low-power broadcasting — research notes
+
+**Question (from Grant):** how does the SwitchBot Meter (W2201500) get ~1 year
+on 2× AAA cells while seeming to broadcast continuously?
+
+**Short answer:** it doesn't really broadcast continuously, and the AAAs do most
+of the heavy lifting (≈ 2000 mAh × 2 in series, or ≈ 4× a typical 1000 mAh
+LiPo of usable energy at 3V regulated). The techniques are:
+
+1. **Non-connectable, scannable adverts only.** No GATT connection in steady
+   state means no LL_CONNECT_REQ handling, no encryption negotiation, no
+   subscribed notifications. Average current is dominated by the advert burst.
+2. **Single short advert burst at low TX power.** SwitchBot uses ~5 s
+   intervals, advert ~1.5 ms across 3 channels at 0 dBm. That's roughly
+   `(7.5 mA × 1.5 ms) / 5 s = ~2.3 µA` for radio alone.
+3. **Tiny payload.** A handful of bytes (temp i16, hum u8, battery u8). Less
+   air time = less mA·ms.
+4. **Aggressive deep sleep between adverts.** nRF52 System ON + RAM retention
+   + only LFCLK running ≈ 1.5–2 µA. DCDC regulator on.
+5. **No sensor work most of the time.** SHT30-class I²C sensor takes ~10 ms
+   @ ~1 mA every sample. They sample every advert (cheap). Crucially they
+   don't drive a load cell.
+6. **Low-leakage support circuitry.** No always-on LED, no pull-ups they don't
+   need, MOSFET-gated rails for the sensor.
+
+**Why Open Apiary can't quite match it (and why that's fine):**
+
+- **HX711 read dominates our power budget.** A 10-sample median means HX711
+  is powered (~1.5 mA) and the MCU is awake polling DRDY for ~250 ms per
+  cycle. That's `(1.5 mA × 0.25 s) / 60 s = ~6 µA` average at a 1-min interval
+  for HX711 alone — already 3× SwitchBot's *total* budget.
+- **Load cells don't change second-to-second** like temperature or motion, so
+  there's no point sampling at SwitchBot rates. The 1-min daytime / 5-min
+  night cadence is the right answer.
+- **We have solar.** A 1 W panel produces ~50–200 mA in daylight; a single
+  good UK day refills a 1000 mAh LiPo many times over. Our real risk is a
+  4-week winter overcast spell, not the daily budget.
+
+**Techniques we should still adopt from SwitchBot:**
+
+- ✅ Non-connectable adverts in steady state (we already do this for BTHome).
+- ✅ Short advert duration — we use 300 ms; could trim to 150 ms (still hits all 3 channels).
+- ✅ 0 dBm TX power (already set).
+- ⬜ **Power-gate the HX711 hard** — drive its VCC through a P-MOSFET from a
+  GPIO so we cut the ~1.5 mA leakage between samples, not just put it in
+  `power_down()`. (~80 % HX711 power saving at 5-min intervals.)
+- ⬜ **Skip the 10-sample median at night** — load cells don't drift much at
+  3 a.m. A 3-sample median is enough and saves ~70 % of HX711 awake time
+  during the 5-min night cycles.
+- ⬜ **Disable the on-board user LEDs at the bootloader level** (Adafruit
+  Bluefruit core blinks them on advert; saves ~50 µA each).
+- ⬜ Consider a smaller (220 ms) advert and skipping the scan response when
+  no name change has happened, to halve radio-on time.
+
+**Realistic v1 power target (revised from <20 µA):**
+
+- HX711 power-gated, 1-min day / 5-min night, 150 ms adverts, DCDC, LEDs off:
+  **target ~15 µA daytime average, ~5 µA night average**.
+- With 1000 mAh LiPo and solar in any UK location except deepest winter: a
+  *single overnight* on battery alone is trivial. Two overcast weeks in
+  December is the real test.
 
 ---
 
@@ -143,6 +297,8 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 - ⬜ Port `hive-visual.js` → `<HiveVisual />` React component
 - ⬜ Background BLE store-and-forward (current pages scan only while open)
 - ⬜ Long-range charts (7d / 30d) — `react-chartjs-2`
+- ⬜ **Rename hive on device** — `HiveDetailPage` action that BLE-connects to the scale during the pairing window and writes a new local name characteristic (see §3b). Display friendly name + `OA-XXXX` underneath.
+- ⬜ **Push current time** to the scale automatically on every pairing-window connect, so day/night scheduling (§3a) works without a manual cal-mode `time` command.
 - ⏭️ Background scanning, iOS push notifications — Phase 2
 
 ### 5.x Distribution plan
@@ -200,6 +356,12 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 
 ## Quick-resume notes (for next session)
 
-- Build firmware: `cd firmware; & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run`
+- Build firmware: `cd firmware; & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e xiaoble`
+- Flash (XIAO in DFU = double-tap RST, appears as COM7): `pio.exe run -e xiaoble -t upload --upload-port COM7`
+- Talk to running firmware (USB CDC, COM8 in app mode): 115200 8N1, commands `tare | cal <kg> | show | save | ble [seconds] | reboot | exit`
 - Repo: `https://github.com/greadingsuk/openapiary` (public, PolyForm NC)
-- Current next action: **finish firmware TODOs in §3** (System OFF, InternalFS, cal CLI) while waiting for parts
+- Verified working (2026-06-08): real battery + die-temp + HX711 reads under SoftDevice, BTHome advert decodes correctly in nRF Connect as `OA-ABCB`.
+- Next actions:
+  1. Implement adaptive wake interval (§3a) and the GATT pairing window for time + name (§3a, §3b)
+  2. Add `Rename hive` flow in the app (§5)
+  3. Power-gate HX711 via P-MOSFET (§3c) before doing the PPK II measurement

@@ -1,11 +1,16 @@
 import { Redirect, Route } from 'react-router-dom';
-import { IonApp, IonRouterOutlet, setupIonicReact } from '@ionic/react';
+import {
+  IonApp, IonIcon, IonLabel, IonRouterOutlet, IonTabBar, IonTabButton,
+  IonTabs, setupIonicReact,
+} from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
+import { gridOutline, statsChartOutline, settingsOutline } from 'ionicons/icons';
 import { useEffect } from 'react';
 import HiveListPage from './pages/HiveListPage';
 import HiveDetailPage from './pages/HiveDetailPage';
 import AddHivePage from './pages/AddHivePage';
 import SettingsPage from './pages/SettingsPage';
+import FleetPage from './pages/FleetPage';
 import { initDb } from './lib/db';
 import { startAutoSync, stopAutoSync } from './lib/sync';
 
@@ -52,15 +57,32 @@ const App: React.FC = () => {
   return (
   <IonApp>
     <IonReactRouter>
-      <IonRouterOutlet>
-        <Route exact path="/hives" component={HiveListPage} />
-        <Route exact path="/add" component={AddHivePage} />
-        <Route exact path="/settings" component={SettingsPage} />
-        <Route exact path="/hive/:id" component={HiveDetailPage} />
-        <Route exact path="/">
-          <Redirect to="/hives" />
-        </Route>
-      </IonRouterOutlet>
+      <IonTabs>
+        <IonRouterOutlet>
+          <Route exact path="/hives" component={HiveListPage} />
+          <Route exact path="/fleet" component={FleetPage} />
+          <Route exact path="/add" component={AddHivePage} />
+          <Route exact path="/settings" component={SettingsPage} />
+          <Route exact path="/hive/:id" component={HiveDetailPage} />
+          <Route exact path="/">
+            <Redirect to="/hives" />
+          </Route>
+        </IonRouterOutlet>
+        <IonTabBar slot="bottom">
+          <IonTabButton tab="hives" href="/hives">
+            <IonIcon icon={gridOutline} aria-hidden="true" />
+            <IonLabel>Hives</IonLabel>
+          </IonTabButton>
+          <IonTabButton tab="fleet" href="/fleet">
+            <IonIcon icon={statsChartOutline} aria-hidden="true" />
+            <IonLabel>Fleet</IonLabel>
+          </IonTabButton>
+          <IonTabButton tab="settings" href="/settings">
+            <IonIcon icon={settingsOutline} aria-hidden="true" />
+            <IonLabel>Settings</IonLabel>
+          </IonTabButton>
+        </IonTabBar>
+      </IonTabs>
     </IonReactRouter>
   </IonApp>
   );

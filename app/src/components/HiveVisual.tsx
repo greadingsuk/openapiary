@@ -1,6 +1,9 @@
-// Hex-comb visual: a 7-cell honeycomb where the centre cell shows the latest
-// weight and the surrounding cells light up based on capacity (0-100%).
-// Pure SVG, no external deps, themable via the Tailwind honey-* tokens.
+// Hive weight dial: a 7-cell honeycomb gauge. The ring fills with capacity
+// (0–100%), the centre cell shows the live weight as a big tabular numeral.
+// Animates the fill on mount/update and glows when the reading is live.
+// Pure SVG, themable via the honey-* tokens.
+
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
     weightKg: number | null;
@@ -10,6 +13,8 @@ interface Props {
     /** Full hive target in kg (default 60 = honey-filled). */
     fullKg?: number;
     name?: string;
+    /** Show the live glow + "live" affordance when the data is fresh. */
+    live?: boolean;
 }
 
 const HEX_RADIUS = 36;
@@ -40,39 +45,84 @@ function combCenters(cx: number, cy: number): Array<[number, number]> {
     ];
 }
 
+const prefersReducedMotion = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
 export default function HiveVisual({
     weightKg,
     batteryV,
     emptyKg = 18,
     fullKg = 60,
     name,
+    live = false,
 }: Props) {
-    const w = weightKg ?? 0;
-    const filledFraction = Math.max(0, Math.min(1, (w - emptyKg) / (fullKg - emptyKg)));
+    const target = weightKg ?? 0;
+    const filledFraction = Math.max(0, Math.min(1, (target - emptyKg) / (fullKg - emptyKg)));
     const ringFilled = Math.round(filledFraction * 6);
+
+    // Count-up animation for the centre numeral.
+    const [displayKg, setDisplayKg] = useState<number>(weightKg == null ? 0 : target);
+    const rafRef = useRef<number | null>(null);
+    const fromRef = useRef<number>(weightKg == null ? 0 : target);
+
+    useEffect(() => {
+        if (weightKg == null) { setDisplayKg(0); fromRef.current = 0; return; }
+        if (prefersReducedMotion()) { setDisplayKg(target); fromRef.current = target; return; }
+        const from = fromRef.current;
+        const to = target;
+        const start = performance.now();
+        const dur = 800;
+        const tick = (t: number) => {
+            const p = Math.min(1, (t - start) / dur);
+            const eased = 1 - Math.pow(1 - p, 3); // decelerate
+            const v = from + (to - from) * eased;
+            setDisplayKg(v);
+            if (p < 1) {
+                rafRef.current = requestAnimationFrame(tick);
+            } else {
+                fromRef.current = to;
+            }
+        };
+        rafRef.current = requestAnimationFrame(tick);
+        return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+    }, [target, weightKg]);
 
     const centres = combCenters(120, 130);
     const ring = centres.slice(1);
+    const a11y = weightKg != null
+        ? `Hive ${name ?? ''} weight ${weightKg.toFixed(1)} kilograms, ${Math.round(filledFraction * 100)} percent full${live ? ', live' : ''}`
+        : `Hive ${name ?? ''}, no recent reading`;
 
     return (
-        <div className="flex flex-col items-center gap-2 py-4 text-honey-100">
-            <svg viewBox="0 0 240 260" width="240" height="260" role="img" aria-label={`Hive ${name ?? ""} visual`}>
+        <div className="flex flex-col items-center gap-2 py-4">
+            <svg
+                viewBox="0 0 240 260"
+                width="240"
+                height="260"
+                role="img"
+                aria-label={a11y}
+                className={live ? 'oa-glow' : undefined}
+            >
                 {/* Ring cells */}
                 {ring.map(([cx, cy], i) => (
                     <polygon
                         key={i}
                         points={hexPoints(cx, cy, HEX_RADIUS)}
-                        fill={i < ringFilled ? "var(--color-honey-300)" : "var(--color-honey-700)"}
-                        opacity={i < ringFilled ? 0.9 : 0.35}
-                        stroke="var(--color-honey-500)"
+                        fill={i < ringFilled ? "var(--oa-honey-300)" : "var(--oa-honey-700)"}
+                        stroke="var(--oa-honey-500)"
                         strokeWidth={1.5}
+                        style={{
+                            opacity: i < ringFilled ? 0.9 : 0.3,
+                            transition: prefersReducedMotion() ? undefined : `opacity 400ms ease ${i * 70}ms`,
+                        }}
                     />
                 ))}
                 {/* Centre cell shows weight */}
                 <polygon
                     points={hexPoints(centres[0][0], centres[0][1], HEX_RADIUS)}
-                    fill="var(--color-honey-400)"
-                    stroke="var(--color-honey-200)"
+                    fill="var(--oa-honey-400)"
+                    stroke="var(--oa-honey-200)"
                     strokeWidth={2}
                 />
                 <text
@@ -81,27 +131,26 @@ export default function HiveVisual({
                     textAnchor="middle"
                     fontSize="20"
                     fontWeight="700"
-                    fill="var(--color-comb-bg)"
+                    fill="var(--oa-on-accent)"
+                    style={{ fontFamily: 'var(--oa-font-display)', fontVariantNumeric: 'tabular-nums' }}
                 >
-                    {weightKg != null ? weightKg.toFixed(1) : "--"}
+                    {weightKg != null ? displayKg.toFixed(1) : "--"}
                 </text>
                 <text
                     x={centres[0][0]}
                     y={centres[0][1] + 16}
                     textAnchor="middle"
                     fontSize="10"
-                    fill="var(--color-comb-bg)"
+                    fill="var(--oa-on-accent)"
                 >
                     kg
                 </text>
             </svg>
-            <div className="flex gap-4 text-sm">
-                <span className="opacity-70">Fill: {Math.round(filledFraction * 100)}%</span>
-                <span className="opacity-70">
-                    Battery: {batteryV != null ? `${batteryV.toFixed(2)} V` : "--"}
-                </span>
+            <div className="flex gap-4 text-sm oa-muted">
+                <span>Fill: {Math.round(filledFraction * 100)}%</span>
+                <span>Battery: {batteryV != null ? `${batteryV.toFixed(2)} V` : "--"}</span>
             </div>
-            {name && <div className="text-xs opacity-60">{name}</div>}
+            {name && <div className="text-xs oa-subtle">{name}</div>}
         </div>
     );
 }

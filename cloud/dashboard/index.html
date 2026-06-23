@@ -3,22 +3,34 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>OpenApiary - Fleet Dashboard</title>
+<title>Open Apiary - Fleet Dashboard</title>
+<link rel="icon" href="icons/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+<meta name="theme-color" content="#f5a91f" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   :root {
-    --bg: #1a1410;
-    --fg: #fff3d1;
+    --bg: #fffdf7;
+    --fg: #1a1410;
     --accent: #f5a91f;
-    --accent-2: #ffc233;
-    --muted: rgba(255, 243, 209, 0.55);
-    --card: #2a1f15;
-    --border: rgba(255, 243, 209, 0.12);
+    --accent-2: #774905;
+    --muted: #6e6047;
+    --card: #fff8e6;
+    --border: rgba(26, 20, 16, 0.12);
+    --on-accent: #14100c;
+    --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Inter", -apple-system, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; font-family: -apple-system, system-ui, sans-serif;
+    margin: 0; font-family: var(--font-body);
     background: var(--bg); color: var(--fg); min-height: 100vh;
   }
   header {
@@ -26,14 +38,31 @@
     padding: 16px 24px; border-bottom: 1px solid var(--border);
     background: var(--card);
   }
-  header h1 { margin: 0; font-size: 18px; color: var(--accent-2); font-weight: 700; letter-spacing: 0.5px; }
+  header h1 { margin: 0; font-family: var(--font-display); font-size: 18px; color: var(--accent-2); font-weight: 700; letter-spacing: 0.5px; }
   header .config { display: flex; gap: 8px; align-items: center; }
   input, button, select {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     padding: 8px 12px; border-radius: 6px; font-size: 13px;
   }
-  button { cursor: pointer; background: var(--accent); color: var(--bg); border: none; font-weight: 600; }
-  button:hover { background: var(--accent-2); }
+  button { cursor: pointer; background: var(--accent); color: var(--on-accent); border: none; font-weight: 600; }
+  button:hover { background: var(--accent-2); color: #fff8e6; }
+  button.ghost { background: transparent; color: var(--accent-2); border: 1px solid var(--border); font-weight: 600; }
+  button.ghost:hover { background: var(--card); color: var(--accent-2); }
+  .who { display: flex; align-items: center; gap: 10px; }
+  .who .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: var(--on-accent);
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.6px;
+  }
+  .who label { color: var(--muted); font-size: 12px; }
+  .who select { min-width: 200px; font-weight: 600; }
+  .settings {
+    display: none; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--card);
+  }
+  .settings.open { display: flex; }
+  .settings .hint { color: var(--muted); font-size: 12px; flex-basis: 100%; }
   main { padding: 24px; display: grid; gap: 24px; max-width: 1400px; margin: 0 auto; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
   .stat {
@@ -41,31 +70,46 @@
     padding: 16px; clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
   }
   .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
-  .stat .value { color: var(--accent-2); font-size: 32px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .stat .value { font-family: var(--font-display); color: var(--accent-2); font-size: 32px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .card {
     background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px;
+    box-shadow: 0 4px 12px rgba(58, 51, 40, 0.10);
   }
-  .card h2 { margin: 0 0 16px 0; font-size: 14px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 1px; }
+  .card h2 { margin: 0 0 16px 0; font-family: var(--font-display); font-size: 14px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 1px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.8px; }
-  td.mono { font-family: ui-monospace, monospace; color: var(--muted); }
-  .error { background: #5a1f1f; color: #ffd0d0; padding: 12px 16px; border-radius: 6px; }
+  td.mono { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .error { background: #fde8e8; color: #8a1f23; padding: 12px 16px; border-radius: 6px; border: 1px solid #f0c0c0; }
   .empty { color: var(--muted); padding: 24px; text-align: center; }
   canvas { max-height: 280px; }
+  /* Loading skeleton shimmer */
+  @keyframes shimmer { 0%{opacity:.4} 50%{opacity:.75} 100%{opacity:.4} }
+  .skeleton { background: linear-gradient(100deg, #e8dcc4 30%, #f5efe2 50%, #e8dcc4 70%); animation: shimmer 1.4s ease-in-out infinite; border-radius: 8px; }
+  .skeleton-stat { height: 84px; clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%); }
+  .skeleton-card { height: 280px; }
+  @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>OPENAPIARY &middot; FLEET</h1>
-  <div class="config">
-    <input id="apiUrl" placeholder="API URL" size="50" />
-    <input id="adminKey" type="password" placeholder="Admin Key" size="40" />
-    <button id="loadBtn">Load</button>
+  <h1>OPEN APIARY &middot; FLEET</h1>
+  <div class="who" id="who">
+    <span class="badge" id="badge" style="display:none"></span>
+    <label id="personaLabel" for="persona" style="display:none">Viewing</label>
+    <select id="persona" style="display:none"></select>
+    <button class="ghost" id="settingsBtn" title="Connection settings">&#9881;</button>
   </div>
 </header>
+<div class="settings" id="settings">
+  <input id="apiUrl" placeholder="API URL" size="50" />
+  <input id="adminKey" type="password" placeholder="Admin Key" size="40" />
+  <button id="loadBtn">Connect</button>
+  <button class="ghost" id="forgetBtn">Forget key</button>
+  <div class="hint">The key is stored only in this browser and is sent as <code>X-Admin-Key</code>. You only need to enter it once.</div>
+</div>
 <main>
   <div id="error"></div>
   <section class="stats" id="stats"></section>
@@ -89,11 +133,14 @@
 const $ = (id) => document.getElementById(id);
 const LS_URL = 'oa.fleet.apiUrl';
 const LS_KEY = 'oa.fleet.adminKey';
+const LS_PERSONA = 'oa.fleet.persona';
 
 $('apiUrl').value = localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev';
 $('adminKey').value = localStorage.getItem(LS_KEY) || '';
 
 let weightChart, regionChart;
+let currentPersona = localStorage.getItem(LS_PERSONA) || '';   // '' = full fleet
+let usersById = {};
 
 async function api(path) {
   const base = $('apiUrl').value.replace(/\/$/, '');
@@ -102,16 +149,53 @@ async function api(path) {
   return r.json();
 }
 
+function personaQuery() {
+  return currentPersona ? `?user=${encodeURIComponent(currentPersona)}` : '';
+}
+
+function setSettingsOpen(open) {
+  $('settings').classList.toggle('open', open);
+}
+
+function renderIdentity(whoami) {
+  const badge = $('badge');
+  badge.style.display = 'inline-flex';
+  badge.textContent = whoami.is_admin ? '\uD83D\uDC51 Admin' : (whoami.label || 'User');
+  if (whoami.is_admin) {
+    $('personaLabel').style.display = '';
+    $('persona').style.display = '';
+  }
+}
+
+function renderPersonaOptions() {
+  const sel = $('persona');
+  const opts = ['<option value="">All users — full fleet</option>'];
+  for (const u of Object.values(usersById)) {
+    const name = u.email || `user ${u.id.slice(0, 8)}`;
+    const admin = u.is_admin ? ' ★' : '';
+    opts.push(`<option value="${u.id}">${name}${admin} (${u.hive_count} hive${u.hive_count === 1 ? '' : 's'})</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  sel.value = currentPersona;
+}
+
 function renderStats(s) {
-  const cells = [
-    ['Users',           s.users],
-    ['Hives',           s.hives],
-    ['Active 24h',      s.hives_active_24h],
-    ['Readings (24h)',  s.readings_24h],
-    ['Readings (total)', s.readings_total],
-  ];
+  const cells = currentPersona
+    ? [
+        ['Hives',           s.hives],
+        ['Active 24h',      s.hives_active_24h],
+        ['Readings (24h)',  s.readings_24h],
+        ['Readings (total)', s.readings_total],
+      ]
+    : [
+        ['Users',           s.users],
+        ['Hives',           s.hives],
+        ['Active 24h',      s.hives_active_24h],
+        ['Readings (24h)',  s.readings_24h],
+        ['Readings (total)', s.readings_total],
+      ];
   $('stats').innerHTML = cells.map(([label, value]) =>
-    `<div class="stat"><div class="label">${label}</div><div class="value">${value.toLocaleString()}</div></div>`
+    `<div class="stat"><div class="label">${label}</div><div class="value">${(value ?? 0).toLocaleString()}</div></div>`
   ).join('');
 }
 
@@ -150,12 +234,12 @@ function renderHives(hives) {
       labels,
       datasets: [{
         data,
-        backgroundColor: ['#f5a91f', '#ffc233', '#a96809', '#774905', '#fff8e6', '#ffd76b'],
-        borderColor: '#1a1410',
+        backgroundColor: ['#f5a91f', '#a96809', '#774905', '#d2581f', '#b8780a', '#ffd76b'],
+        borderColor: '#fffdf7',
         borderWidth: 2,
       }],
     },
-    options: { plugins: { legend: { labels: { color: '#fff3d1' } } } },
+    options: { plugins: { legend: { labels: { color: '#1a1410' } } } },
   });
 }
 
@@ -180,8 +264,8 @@ function renderWeightChart(readings) {
       datasets: [{
         label: 'Fleet mean weight (kg)',
         data: points,
-        borderColor: '#f5a91f',
-        backgroundColor: 'rgba(255, 194, 51, 0.2)',
+        borderColor: '#b8780a',
+        backgroundColor: 'rgba(245, 169, 31, 0.18)',
         fill: true,
         tension: 0.25,
         pointRadius: 0,
@@ -190,34 +274,90 @@ function renderWeightChart(readings) {
     options: {
       responsive: true, maintainAspectRatio: false,
       scales: {
-        x: { type: 'time', ticks: { color: '#fff3d1', maxTicksLimit: 8 }, grid: { color: 'rgba(255,243,209,0.08)' } },
-        y: { ticks: { color: '#fff3d1' }, grid: { color: 'rgba(255,243,209,0.08)' } },
+        x: { type: 'time', ticks: { color: '#6e6047', maxTicksLimit: 8 }, grid: { color: 'rgba(26,20,16,0.08)' } },
+        y: { ticks: { color: '#6e6047' }, grid: { color: 'rgba(26,20,16,0.08)' } },
       },
-      plugins: { legend: { labels: { color: '#fff3d1' } } },
+      plugins: { legend: { labels: { color: '#1a1410' } } },
     },
   });
 }
 
 $('loadBtn').onclick = async () => {
-  $('error').innerHTML = '';
   localStorage.setItem(LS_URL, $('apiUrl').value);
   localStorage.setItem(LS_KEY, $('adminKey').value);
-  try {
-    const [stats, hives, readings] = await Promise.all([
-      api('/v1/admin/fleet/stats'),
-      api('/v1/admin/fleet/hives'),
-      api('/v1/admin/fleet/readings'),
-    ]);
-    renderStats(stats);
-    renderHives(hives.hives);
-    renderWeightChart(readings.readings);
-  } catch (e) {
-    $('error').innerHTML = `<div class="error">${e.message}</div>`;
-  }
+  await connect();
 };
 
-// Auto-load if key is already saved.
-if ($('adminKey').value) $('loadBtn').click();
+$('forgetBtn').onclick = () => {
+  localStorage.removeItem(LS_KEY);
+  localStorage.removeItem(LS_PERSONA);
+  $('adminKey').value = '';
+  location.reload();
+};
+
+$('settingsBtn').onclick = () => {
+  setSettingsOpen(!$('settings').classList.contains('open'));
+};
+
+$('persona').onchange = async () => {
+  currentPersona = $('persona').value;
+  localStorage.setItem(LS_PERSONA, currentPersona);
+  await loadData();
+};
+
+async function loadData() {
+  $('error').innerHTML = '';
+  showLoading();
+  const q = personaQuery();
+  const [stats, hives, readings] = await Promise.all([
+    api('/v1/admin/fleet/stats' + q),
+    api('/v1/admin/fleet/hives' + q),
+    api('/v1/admin/fleet/readings' + q),
+  ]);
+  renderStats(stats);
+  renderHives(hives.hives);
+  renderWeightChart(readings.readings);
+}
+
+function showLoading() {
+  $('stats').innerHTML = Array.from({ length: 4 })
+    .map(() => '<div class="skeleton skeleton-stat"></div>').join('');
+  $('hivesTable').innerHTML = '<div class="skeleton" style="height:120px"></div>';
+}
+
+async function connect() {
+  $('error').innerHTML = '';
+  if (!$('adminKey').value) {
+    setSettingsOpen(true);
+    return;
+  }
+  try {
+    const whoami = await api('/v1/admin/whoami');
+    renderIdentity(whoami);
+    setSettingsOpen(false);
+    if (whoami.is_admin) {
+      const { users } = await api('/v1/admin/users');
+      usersById = Object.fromEntries(users.map(u => [u.id, u]));
+      // Drop a stale persona that no longer exists.
+      if (currentPersona && !usersById[currentPersona]) {
+        currentPersona = '';
+        localStorage.removeItem(LS_PERSONA);
+      }
+      renderPersonaOptions();
+    }
+    await loadData();
+  } catch (e) {
+    setSettingsOpen(true);
+    $('error').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+// Auto-connect silently if a key was already saved — no need to re-enter it.
+if ($('adminKey').value) {
+  connect();
+} else {
+  setSettingsOpen(true);
+}
 </script>
 </body>
 </html>

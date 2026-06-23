@@ -145,3 +145,94 @@ export async function unsyncedCount(): Promise<number> {
   const res = await db!.query('SELECT COUNT(*) AS n FROM readings WHERE synced = 0');
   return (res.values?.[0] as { n: number } | undefined)?.n ?? 0;
 }
+
+// ---------------------------------------------------------------------------
+// Offline-first read helpers. Screens read from these FIRST (instant, works
+// offline); cloud data is merged in on top when a network is available.
+// ---------------------------------------------------------------------------
+
+export async function listHivesLocal(): Promise<Hive[]> {
+  await initDb();
+  if (useMemory) {
+    return [...memHives.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const res = await db!.query('SELECT id, name, created_at FROM hives ORDER BY name ASC');
+  return (res.values ?? []) as Hive[];
+}
+
+/** Latest reading for a single hive, or null if none cached. */
+export async function latestReading(hiveId: string): Promise<Reading | null> {
+  await initDb();
+  if (useMemory) {
+    const rows = memReadings.filter((r) => r.hive_id === hiveId).sort((a, b) => b.ts - a.ts);
+    return rows[0] ?? null;
+  }
+  const res = await db!.query(
+    `SELECT hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi
+       FROM readings WHERE hive_id = ? ORDER BY ts DESC LIMIT 1`,
+    [hiveId],
+  );
+  return (res.values?.[0] as Reading | undefined) ?? null;
+}
+
+/** Latest reading for every known hive, keyed by hive id. */
+export async function latestReadingPerHive(): Promise<Map<string, Reading>> {
+  await initDb();
+  const out = new Map<string, Reading>();
+  if (useMemory) {
+    for (const r of memReadings) {
+      const cur = out.get(r.hive_id);
+      if (!cur || r.ts > cur.ts) out.set(r.hive_id, r);
+    }
+    return out;
+  }
+  const res = await db!.query(
+    `SELECT r.hive_id, r.ts, r.weight_kg, r.battery_v, r.temp_c, r.packet_id, r.rssi
+       FROM readings r
+       JOIN (SELECT hive_id, MAX(ts) AS mts FROM readings GROUP BY hive_id) m
+         ON m.hive_id = r.hive_id AND m.mts = r.ts`,
+  );
+  for (const row of res.values ?? []) {
+    const r = row as Reading;
+    out.set(r.hive_id, r);
+  }
+  return out;
+}
+
+/** Readings for a hive newer than `sinceMs` (0 = all), oldest-first for charting. */
+export async function getReadingsLocal(hiveId: string, sinceMs = 0): Promise<Reading[]> {
+  await initDb();
+  if (useMemory) {
+    return memReadings
+      .filter((r) => r.hive_id === hiveId && r.ts >= sinceMs)
+      .sort((a, b) => a.ts - b.ts)
+      .map((r) => ({
+        hive_id: r.hive_id, ts: r.ts, weight_kg: r.weight_kg, battery_v: r.battery_v,
+        temp_c: r.temp_c, packet_id: r.packet_id, rssi: r.rssi,
+      }));
+  }
+  const res = await db!.query(
+    `SELECT hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi
+       FROM readings WHERE hive_id = ? AND ts >= ? ORDER BY ts ASC`,
+    [hiveId, sinceMs],
+  );
+  return (res.values ?? []) as Reading[];
+}
+
+export async function hiveCount(): Promise<number> {
+  await initDb();
+  if (useMemory) return memHives.size;
+  const res = await db!.query('SELECT COUNT(*) AS n FROM hives');
+  return (res.values?.[0] as { n: number } | undefined)?.n ?? 0;
+}
+
+/** Rename a cached hive locally (mirrors a successful device/cloud rename). */
+export async function renameHiveLocal(hiveId: string, name: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    const h = memHives.get(hiveId);
+    if (h) memHives.set(hiveId, { ...h, name });
+    return;
+  }
+  await db!.run('UPDATE hives SET name = ? WHERE id = ?', [name, hiveId]);
+}
