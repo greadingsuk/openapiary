@@ -30,13 +30,18 @@ function setState(next: Partial<AuthState>) {
 
 /** Load persisted auth into the store. Call once on app boot. */
 export async function initAuth(): Promise<void> {
-  const s = await loadSettings();
-  setState({
-    ready: true,
-    authed: !!s.apiKey,
-    email: s.accountEmail,
-    apiUrl: s.apiUrl,
-  });
+  try {
+    const s = await loadSettings();
+    setState({
+      ready: true,
+      authed: !!s.apiKey,
+      email: s.accountEmail,
+      apiUrl: s.apiUrl,
+    });
+  } catch {
+    // Never hang on the splash — fall through to the welcome screen.
+    setState({ ready: true, authed: false, email: null });
+  }
 }
 
 async function persistAuth(apiKey: string, email: string | null) {

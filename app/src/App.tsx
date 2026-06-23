@@ -1,6 +1,6 @@
 import { Redirect, Route } from 'react-router-dom';
 import {
-  IonApp, IonIcon, IonLabel, IonRouterOutlet, IonTabBar, IonTabButton,
+  IonApp, IonIcon, IonLabel, IonRouterOutlet, IonSpinner, IonTabBar, IonTabButton,
   IonTabs, setupIonicReact,
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
@@ -70,21 +70,24 @@ const App: React.FC = () => {
   if (!auth.ready) {
     return (
       <IonApp>
-        <IonReactRouter>
-          <IonRouterOutlet />
-        </IonReactRouter>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            height: '100%', background: 'var(--oa-surface-base, #fffdf7)',
+          }}
+        >
+          <IonSpinner name="dots" />
+        </div>
       </IonApp>
     );
   }
 
+  // Auth screen is a single view — render it directly (NOT inside an
+  // IonRouterOutlet, which won't render a pathless route → blank screen).
   if (!auth.authed) {
     return (
       <IonApp>
-        <IonReactRouter>
-          <IonRouterOutlet>
-            <Route component={AuthPage} />
-          </IonRouterOutlet>
-        </IonReactRouter>
+        <AuthPage />
       </IonApp>
     );
   }
