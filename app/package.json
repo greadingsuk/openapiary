@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test.e2e": "cypress run",
     "test.unit": "vitest",
-    "lint": "eslint"
+    "lint": "eslint",
+    "icons": "capacitor-assets generate --iconBackgroundColor '#fff8e6' --iconBackgroundColorDark '#fff8e6' --assetPath assets"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "^8.2.0",
@@ -38,6 +39,7 @@
     "react-router-dom": "^5.3.4"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "8.3.4",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/dom": ">=7.21.4",
