@@ -68,6 +68,38 @@ async function sha256Hex(s: string): Promise<string> {
     return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomHex(nBytes: number): string {
+    return bytesToHex(crypto.getRandomValues(new Uint8Array(nBytes)));
+}
+
+// PBKDF2-SHA256 password hashing (Workers-native via Web Crypto).
+const PBKDF2_ITERS = 100_000;
+async function derivePassword(password: string, saltHex: string): Promise<string> {
+    const salt = Uint8Array.from(saltHex.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
+    const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(password),
+        "PBKDF2",
+        false,
+        ["deriveBits"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+        { name: "PBKDF2", salt, iterations: PBKDF2_ITERS, hash: "SHA-256" },
+        key,
+        256
+    );
+    return bytesToHex(new Uint8Array(bits));
+}
+
+async function verifyPassword(password: string, saltHex: string, expectedHex: string): Promise<boolean> {
+    const got = await derivePassword(password, saltHex);
+    return timingSafeEqual(got, expectedHex);
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
     let diff = 0;
@@ -79,11 +111,33 @@ const newId = () => crypto.randomUUID();
 
 async function findUserByKey(db: D1Database, rawKey: string): Promise<User | null> {
     const hash = await sha256Hex(rawKey);
+    // Primary key on the user row (legacy + register-issued).
     const row = await db
         .prepare(`SELECT id, email, api_key_hash, created_at, is_admin FROM users WHERE api_key_hash = ?`)
         .bind(hash)
         .first<User>();
-    return row ?? null;
+    if (row) return row;
+    // Per-device key minted at login → resolve to its owning user.
+    const viaDevice = await db
+        .prepare(
+            `SELECT u.id, u.email, u.api_key_hash, u.created_at, u.is_admin
+             FROM device_keys d JOIN users u ON u.id = d.user_id
+             WHERE d.key_hash = ?`
+        )
+        .bind(hash)
+        .first<User>();
+    return viaDevice ?? null;
+}
+
+// Mint a fresh API key bound to a user (one per device/login). Returns the raw key.
+async function mintDeviceKey(db: D1Database, userId: string, label?: string): Promise<string> {
+    const rawKey = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, "");
+    const hash = await sha256Hex(rawKey);
+    await db
+        .prepare(`INSERT INTO device_keys (key_hash, user_id, created_at, label) VALUES (?, ?, ?, ?)`)
+        .bind(hash, userId, Date.now(), label ?? null)
+        .run();
+    return rawKey;
 }
 
 async function adoptLegacyKeyIfMatch(
@@ -106,10 +160,14 @@ async function adoptLegacyKeyIfMatch(
     return { id, email: null, api_key_hash: hash, created_at: now, is_admin: 0 };
 }
 
-// --- auth middleware for /v1/* (excluding /v1/admin/* + /v1/account/register) ---
+// --- auth middleware for /v1/* (excluding /v1/admin/* + public account routes) ---
 app.use("/v1/*", async (c, next) => {
     const path = new URL(c.req.url).pathname;
-    if (path.startsWith("/v1/admin/") || path === "/v1/account/register") {
+    if (
+        path.startsWith("/v1/admin/") ||
+        path === "/v1/account/register" ||
+        path === "/v1/account/login"
+    ) {
         return next();
     }
     const provided = c.req.header("X-API-Key") ?? "";
@@ -147,17 +205,35 @@ app.use("/v1/admin/*", async (c, next) => {
 });
 
 // --- POST /v1/account/register ---
+// Body: { email?, password? }
+//   - email + password  → a full account that can log in from any device.
+//   - neither           → an anonymous "try it" account (can be upgraded later).
 app.post("/v1/account/register", async (c) => {
-    const body = await c.req.json<{ email?: string }>().catch(() => ({}));
+    const body = await c.req.json<{ email?: string; password?: string }>().catch(() => ({}));
+    const email = body.email?.trim().toLowerCase() || null;
+    const password = body.password ?? "";
+
+    if (email && password.length < 8) {
+        return c.json({ error: "password must be at least 8 characters" }, 400);
+    }
+
     const id = newId();
     const rawKey = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, "");
     const hash = await sha256Hex(rawKey);
+
+    let passwordHash: string | null = null;
+    let passwordSalt: string | null = null;
+    if (email && password) {
+        passwordSalt = randomHex(16);
+        passwordHash = await derivePassword(password, passwordSalt);
+    }
+
     try {
         await c.env.DB.prepare(
-            `INSERT INTO users (id, email, api_key_hash, created_at, is_admin)
-             VALUES (?, ?, ?, ?, 0)`
+            `INSERT INTO users (id, email, api_key_hash, password_hash, password_salt, created_at, is_admin)
+             VALUES (?, ?, ?, ?, ?, ?, 0)`
         )
-            .bind(id, body.email ?? null, hash, Date.now())
+            .bind(id, email, hash, passwordHash, passwordSalt, Date.now())
             .run();
     } catch (e: any) {
         if (String(e?.message).includes("UNIQUE")) {
@@ -165,7 +241,57 @@ app.post("/v1/account/register", async (c) => {
         }
         throw e;
     }
-    return c.json({ user_id: id, api_key: rawKey });
+    return c.json({ user_id: id, api_key: rawKey, email });
+});
+
+// --- POST /v1/account/login ---
+// Body: { email, password }. Verifies credentials, mints a fresh per-device key.
+app.post("/v1/account/login", async (c) => {
+    const body = await c.req.json<{ email?: string; password?: string; device?: string }>().catch(() => ({}));
+    const email = body.email?.trim().toLowerCase();
+    const password = body.password ?? "";
+    if (!email || !password) return c.json({ error: "email and password required" }, 400);
+
+    const user = await c.env.DB.prepare(
+        `SELECT id, password_hash, password_salt FROM users WHERE email = ?`
+    )
+        .bind(email)
+        .first<{ id: string; password_hash: string | null; password_salt: string | null }>();
+
+    if (!user || !user.password_hash || !user.password_salt) {
+        return c.json({ error: "invalid email or password" }, 401);
+    }
+    const ok = await verifyPassword(password, user.password_salt, user.password_hash);
+    if (!ok) return c.json({ error: "invalid email or password" }, 401);
+
+    const rawKey = await mintDeviceKey(c.env.DB, user.id, body.device);
+    return c.json({ user_id: user.id, api_key: rawKey, email });
+});
+
+// --- POST /v1/account/upgrade — add email+password to the current (anonymous) account ---
+app.post("/v1/account/upgrade", async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json<{ email?: string; password?: string }>().catch(() => ({}));
+    const email = body.email?.trim().toLowerCase();
+    const password = body.password ?? "";
+    if (!email || password.length < 8) {
+        return c.json({ error: "email and an 8+ character password required" }, 400);
+    }
+    const salt = randomHex(16);
+    const hash = await derivePassword(password, salt);
+    try {
+        await c.env.DB.prepare(
+            `UPDATE users SET email = ?, password_hash = ?, password_salt = ? WHERE id = ?`
+        )
+            .bind(email, hash, salt, user.id)
+            .run();
+    } catch (e: any) {
+        if (String(e?.message).includes("UNIQUE")) {
+            return c.json({ error: "email already registered" }, 409);
+        }
+        throw e;
+    }
+    return c.json({ ok: true, email });
 });
 
 // --- GET /v1/me — identity of the caller (regular user key) ---

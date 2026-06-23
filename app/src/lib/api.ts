@@ -31,6 +31,61 @@ function headers(s: Settings): HeadersInit {
   return { 'X-API-Key': s.apiKey, 'Content-Type': 'application/json' };
 }
 
+export interface AccountResult {
+  user_id: string;
+  api_key: string;
+  email: string | null;
+}
+
+/** Create a new account. Pass email+password for a full account, or neither for anonymous. */
+export async function registerAccount(
+  apiUrl: string,
+  email?: string,
+  password?: string,
+): Promise<AccountResult> {
+  const r = await fetch(`${apiUrl}/v1/account/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `register failed (${r.status})`);
+  return j as AccountResult;
+}
+
+/** Log in with email + password; the server mints a fresh per-device key. */
+export async function loginAccount(
+  apiUrl: string,
+  email: string,
+  password: string,
+  device?: string,
+): Promise<AccountResult> {
+  const r = await fetch(`${apiUrl}/v1/account/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, device }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `login failed (${r.status})`);
+  return j as AccountResult;
+}
+
+/** Add email + password to the current anonymous account (enables cross-device). */
+export async function upgradeAccount(
+  s: Settings,
+  email: string,
+  password: string,
+): Promise<{ ok: boolean; email: string }> {
+  const r = await fetch(`${s.apiUrl}/v1/account/upgrade`, {
+    method: 'POST',
+    headers: headers(s),
+    body: JSON.stringify({ email, password }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `upgrade failed (${r.status})`);
+  return j;
+}
+
 export async function postReadings(
   s: Settings,
   hiveId: string,

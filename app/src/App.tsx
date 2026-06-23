@@ -11,8 +11,10 @@ import HiveDetailPage from './pages/HiveDetailPage';
 import AddHivePage from './pages/AddHivePage';
 import SettingsPage from './pages/SettingsPage';
 import FleetPage from './pages/FleetPage';
+import AuthPage from './pages/AuthPage';
 import { initDb } from './lib/db';
 import { startAutoSync, stopAutoSync } from './lib/sync';
+import { initAuth, useAuth } from './lib/auth';
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/react/css/core.css';
@@ -48,11 +50,44 @@ import './theme/tailwind.css';
 setupIonicReact();
 
 const App: React.FC = () => {
+  const auth = useAuth();
+
   useEffect(() => {
     void initDb();
-    startAutoSync();
-    return () => stopAutoSync();
+    void initAuth();
   }, []);
+
+  // Auto-sync only runs while signed in.
+  useEffect(() => {
+    if (auth.authed) {
+      startAutoSync();
+      return () => stopAutoSync();
+    }
+  }, [auth.authed]);
+
+  // Hold the first paint until we know whether the user is signed in,
+  // so we never flash the welcome screen at a returning user.
+  if (!auth.ready) {
+    return (
+      <IonApp>
+        <IonReactRouter>
+          <IonRouterOutlet />
+        </IonReactRouter>
+      </IonApp>
+    );
+  }
+
+  if (!auth.authed) {
+    return (
+      <IonApp>
+        <IonReactRouter>
+          <IonRouterOutlet>
+            <Route component={AuthPage} />
+          </IonRouterOutlet>
+        </IonReactRouter>
+      </IonApp>
+    );
+  }
 
   return (
   <IonApp>

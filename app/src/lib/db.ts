@@ -236,3 +236,14 @@ export async function renameHiveLocal(hiveId: string, name: string): Promise<voi
   }
   await db!.run('UPDATE hives SET name = ? WHERE id = ?', [name, hiveId]);
 }
+
+/** Wipe all cached hives + readings (used on sign-out so accounts don't bleed). */
+export async function clearLocalData(): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    memReadings.length = 0;
+    memHives.clear();
+    return;
+  }
+  await db!.execute('DELETE FROM readings; DELETE FROM hives;');
+}

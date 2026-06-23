@@ -5,6 +5,8 @@ export interface Settings {
   apiKey: string;
   syncEnabled: boolean;
   backgroundScan: boolean;
+  /** Email of the signed-in account, or null for an anonymous "try it" account. */
+  accountEmail: string | null;
 }
 
 const KEY = 'openapiary.settings.v1';
@@ -14,6 +16,7 @@ const DEFAULTS: Settings = {
   apiKey: '',
   syncEnabled: false,
   backgroundScan: false,
+  accountEmail: null,
 };
 
 export async function loadSettings(): Promise<Settings> {

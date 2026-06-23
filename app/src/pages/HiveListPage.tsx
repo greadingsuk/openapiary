@@ -43,9 +43,6 @@ const HiveListPage: React.FC = () => {
           }
           setHives([...byId.values()].sort((a, b) => a.name.localeCompare(b.name)));
         }
-      } else if (!localHives.length && !s.apiKey) {
-        // Nothing local and no key — nudge, but only if truly empty.
-        setError('Add your API key in Settings to sync hives across devices.');
       }
     } catch (e) {
       // Cloud failed but we still have local data — only surface if we have nothing.
