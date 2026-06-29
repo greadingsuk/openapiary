@@ -8,7 +8,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-<meta name="theme-color" content="#f5a91f" />
+<meta name="theme-color" content="#000000" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" />
@@ -16,14 +16,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   :root {
-    --bg: #fffdf7;
-    --fg: #1a1410;
-    --accent: #f5a91f;
-    --accent-2: #774905;
-    --muted: #6e6047;
-    --card: #fff8e6;
-    --border: rgba(26, 20, 16, 0.12);
-    --on-accent: #14100c;
+    --bg: #fbf8f2;
+    --fg: #120805;
+    --accent: #f2800f;
+    --accent-2: #b05908;
+    --muted: #6e6655;
+    --card: #ffffff;
+    --border: rgba(18, 8, 5, 0.08);
+    --on-accent: #ffffff;
+    --bar: #000000;
+    --on-bar: #f3ece0;
     --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
     --font-body: "Inter", -apple-system, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -35,19 +37,19 @@
   }
   header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 24px; border-bottom: 1px solid var(--border);
-    background: var(--card);
+    padding: 16px 24px; border-bottom: none;
+    background: var(--bar);
   }
-  header h1 { margin: 0; font-family: var(--font-display); font-size: 18px; color: var(--accent-2); font-weight: 700; letter-spacing: 0.5px; }
+  header h1 { margin: 0; font-family: var(--font-display); font-size: 18px; color: var(--on-bar); font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; }
   header .config { display: flex; gap: 8px; align-items: center; }
   input, button, select {
-    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-    padding: 8px 12px; border-radius: 6px; font-size: 13px;
+    background: #fff; color: var(--fg); border: 1px solid var(--border);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px;
   }
-  button { cursor: pointer; background: var(--accent); color: var(--on-accent); border: none; font-weight: 600; }
-  button:hover { background: var(--accent-2); color: #fff8e6; }
-  button.ghost { background: transparent; color: var(--accent-2); border: 1px solid var(--border); font-weight: 600; }
-  button.ghost:hover { background: var(--card); color: var(--accent-2); }
+  button { cursor: pointer; background: var(--accent); color: var(--on-accent); border: none; font-weight: 700; }
+  button:hover { background: var(--accent-2); color: #fff; }
+  button.ghost { background: rgba(243,236,224,0.12); color: var(--on-bar); border: 1px solid rgba(243,236,224,0.25); font-weight: 600; }
+  button.ghost:hover { background: rgba(243,236,224,0.22); color: #fff; }
   .who { display: flex; align-items: center; gap: 10px; }
   .who .badge {
     display: inline-flex; align-items: center; gap: 6px;
@@ -59,23 +61,23 @@
   .who select { min-width: 200px; font-weight: 600; }
   .settings {
     display: none; gap: 8px; align-items: center; flex-wrap: wrap;
-    padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--card);
+    padding: 12px 24px; border-bottom: 1px solid var(--border); background: #fff;
   }
   .settings.open { display: flex; }
   .settings .hint { color: var(--muted); font-size: 12px; flex-basis: 100%; }
   main { padding: 24px; display: grid; gap: 24px; max-width: 1400px; margin: 0 auto; }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
   .stat {
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    padding: 16px; clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; box-shadow: 0 1px 3px rgba(18,8,5,0.06);
   }
   .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
-  .stat .value { font-family: var(--font-display); color: var(--accent-2); font-size: 32px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .stat .value { font-family: var(--font-display); color: var(--accent); font-size: 32px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px;
-    box-shadow: 0 4px 12px rgba(58, 51, 40, 0.10);
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px;
+    box-shadow: 0 1px 3px rgba(18,8,5,0.06);
   }
-  .card h2 { margin: 0 0 16px 0; font-family: var(--font-display); font-size: 14px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 1px; }
+  .card h2 { margin: 0 0 16px 0; font-family: var(--font-display); font-size: 14px; color: var(--fg); text-transform: uppercase; letter-spacing: 1px; font-weight: 800; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -87,8 +89,8 @@
   canvas { max-height: 280px; }
   /* Loading skeleton shimmer */
   @keyframes shimmer { 0%{opacity:.4} 50%{opacity:.75} 100%{opacity:.4} }
-  .skeleton { background: linear-gradient(100deg, #e8dcc4 30%, #f5efe2 50%, #e8dcc4 70%); animation: shimmer 1.4s ease-in-out infinite; border-radius: 8px; }
-  .skeleton-stat { height: 84px; clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%); }
+  .skeleton { background: linear-gradient(100deg, #efe7d8 30%, #f7f1e6 50%, #efe7d8 70%); animation: shimmer 1.4s ease-in-out infinite; border-radius: 12px; }
+  .skeleton-stat { height: 84px; }
   .skeleton-card { height: 280px; }
   @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 </style>
@@ -234,7 +236,7 @@ function renderHives(hives) {
       labels,
       datasets: [{
         data,
-        backgroundColor: ['#f5a91f', '#a96809', '#774905', '#d2581f', '#b8780a', '#ffd76b'],
+        backgroundColor: ['#f2800f', '#b05908', '#834206', '#d2581f', '#f5a04d', '#fbddbb'],
         borderColor: '#fffdf7',
         borderWidth: 2,
       }],
@@ -264,8 +266,8 @@ function renderWeightChart(readings) {
       datasets: [{
         label: 'Fleet mean weight (kg)',
         data: points,
-        borderColor: '#b8780a',
-        backgroundColor: 'rgba(245, 169, 31, 0.18)',
+        borderColor: '#f2800f',
+        backgroundColor: 'rgba(242, 128, 15, 0.16)',
         fill: true,
         tension: 0.25,
         pointRadius: 0,
