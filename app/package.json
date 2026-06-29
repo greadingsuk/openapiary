@@ -10,7 +10,9 @@
     "test.e2e": "cypress run",
     "test.unit": "vitest",
     "lint": "eslint",
-    "icons": "capacitor-assets generate --iconBackgroundColor '#fff8e6' --iconBackgroundColorDark '#fff8e6' --assetPath assets"
+    "icons": "capacitor-assets generate --iconBackgroundColor '#fff8e6' --iconBackgroundColorDark '#fff8e6' --assetPath assets",
+    "ios": "bash ./build-ios.sh",
+    "ios:fast": "bash ./build-ios.sh --no-pull"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "^8.2.0",
