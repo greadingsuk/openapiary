@@ -36,7 +36,7 @@
   --oa-ink-muted:  #5d564a;
   --oa-ink-subtle: #8b8475;
   --oa-on-accent:  #ffffff;
-  --oa-bar:        #120805;   /* header + tab bar background */
+  --oa-bar:        #000000;   /* header + tab bar background */
   --oa-on-bar:     #f3ece0;   /* text/icons on the dark bars */
 
   --oa-glass-border: rgba(18, 8, 5, 0.08);

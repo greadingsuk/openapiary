@@ -74,7 +74,7 @@ const App: React.FC = () => {
           const { StatusBar, Style } = await import('@capacitor/status-bar');
           await StatusBar.setStyle({ style: Style.Dark });
           if (Capacitor.getPlatform() === 'android') {
-            await StatusBar.setBackgroundColor({ color: '#120805' });
+            await StatusBar.setBackgroundColor({ color: '#000000' });
           }
         } catch { /* status bar plugin optional */ }
       }
