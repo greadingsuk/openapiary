@@ -4,16 +4,16 @@
  * Keep colour values in sync with branding/tokens/tokens.css. */
 
 :root {
-  /* ---- Brand palette (mirrors tailwind @theme) ---- */
-  --oa-honey-50:  #fff8e6;
-  --oa-honey-100: #ffe9a8;
-  --oa-honey-200: #ffd76b;
-  --oa-honey-300: #ffc233;
-  --oa-honey-400: #f5a91f;
-  --oa-honey-500: #d98a0c;
-  --oa-honey-600: #a96809;
-  --oa-honey-700: #774905;
-  --oa-honey-800: #4d2f03;
+  /* ---- Brand palette — Black Mountain Honey inspired (cream / black / orange) ---- */
+  --oa-honey-50:  #fdf4e8;
+  --oa-honey-100: #f9e1c1;
+  --oa-honey-200: #f4c98d;
+  --oa-honey-300: #f0ad59;
+  --oa-honey-400: #ee8b2a;  /* BMH primary orange (buttons / accent) */
+  --oa-honey-500: #db761a;
+  --oa-honey-600: #b85f12;  /* orange text on cream */
+  --oa-honey-700: #8f490d;
+  --oa-honey-800: #5c2f07;
 
   --oa-kraft-50:  #f5efe2;
   --oa-kraft-100: #e8dcc4;
@@ -24,19 +24,21 @@
   --oa-kraft-600: #5e523c;
   --oa-kraft-700: #3a3328;
 
-  --oa-surface-base: #f2f3f5;
+  /* Warm cream canvas, white cards (BMH body uses warm off-white). */
+  --oa-surface-base: #f6f1e7;
   --oa-surface-1:    #ffffff;
-  --oa-surface-2:    #f7f8fa;
-  --oa-surface-3:    #eef0f3;
+  --oa-surface-2:    #faf6ee;
+  --oa-surface-3:    #efe8da;
 
-  --oa-ink:        #1c1d1f;
-  --oa-ink-muted:  #5b6066;
-  --oa-ink-subtle: #8a9099;
-  --oa-on-accent:  #14100c;
+  /* Near-black warm ink (BMH header/footer bars + body text). */
+  --oa-ink:        #17130c;
+  --oa-ink-muted:  #5d564a;
+  --oa-ink-subtle: #8b8475;
+  --oa-on-accent:  #ffffff;
 
-  --oa-glass-border: rgba(20, 22, 26, 0.08);
+  --oa-glass-border: rgba(23, 19, 12, 0.08);
 
-  --oa-data-weight:  #b8780a;
+  --oa-data-weight:  #db761a;
   --oa-data-battery: #5f9145;
   --oa-data-temp:    #d2581f;
   --oa-data-alert:   #cf3a3f;
@@ -58,31 +60,31 @@
   --ion-font-family: var(--oa-font-body);
 
   --ion-background-color: var(--oa-surface-base);
-  --ion-background-color-rgb: 242, 243, 245;
+  --ion-background-color-rgb: 246, 241, 231;
 
   --ion-text-color: var(--oa-ink);
-  --ion-text-color-rgb: 28, 29, 31;
+  --ion-text-color-rgb: 23, 19, 12;
 
   --ion-border-color: var(--oa-glass-border);
 
-  /* Stepped backgrounds Ionic derives for cards, items, ripples, etc. (neutral grey) */
-  --ion-color-step-50:  #edeef0;
-  --ion-color-step-100: #e3e5e8;
-  --ion-color-step-150: #d8dadf;
-  --ion-color-step-200: #cdd0d6;
-  --ion-color-step-250: #c2c6cd;
-  --ion-color-step-300: #b7bcc4;
-  --ion-color-step-350: #aab0b9;
-  --ion-color-step-400: #9aa1ab;
-  --ion-color-step-450: #8a929d;
-  --ion-color-step-500: #7a838f;
-  --ion-color-step-550: #6c747f;
-  --ion-color-step-600: #5d646e;
-  --ion-color-step-650: #4e545d;
-  --ion-color-step-700: #3f444b;
-  --ion-color-step-750: #30343a;
-  --ion-color-step-800: #242729;
-  --ion-color-step-850: #1f2123;
+  /* Stepped backgrounds Ionic derives for cards, items, ripples, etc. (warm cream/taupe) */
+  --ion-color-step-50:  #f1ece2;
+  --ion-color-step-100: #ebe5d8;
+  --ion-color-step-150: #e4ddce;
+  --ion-color-step-200: #ddd5c3;
+  --ion-color-step-250: #d3cab6;
+  --ion-color-step-300: #c7bda7;
+  --ion-color-step-350: #b8ad97;
+  --ion-color-step-400: #a89c84;
+  --ion-color-step-450: #978a72;
+  --ion-color-step-500: #877a62;
+  --ion-color-step-550: #786c55;
+  --ion-color-step-600: #695e48;
+  --ion-color-step-650: #5a503c;
+  --ion-color-step-700: #4a4231;
+  --ion-color-step-750: #3a3427;
+  --ion-color-step-800: #2a261c;
+  --ion-color-step-850: #211e15;
   --ion-color-step-900: var(--oa-ink);
 
   /* Toolbars + tab bar are clean white; content sits on soft grey. */
@@ -100,11 +102,11 @@
 
   --ion-card-background: var(--oa-surface-1);
 
-  /* ---- Primary (honey) ---- */
+  /* ---- Primary (BMH orange) ---- */
   --ion-color-primary: var(--oa-honey-400);
-  --ion-color-primary-rgb: 245, 169, 31;
-  --ion-color-primary-contrast: var(--oa-on-accent);
-  --ion-color-primary-contrast-rgb: 20, 16, 12;
+  --ion-color-primary-rgb: 238, 139, 42;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
   --ion-color-primary-shade: var(--oa-honey-500);
   --ion-color-primary-tint: var(--oa-honey-300);
 
