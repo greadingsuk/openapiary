@@ -13,20 +13,29 @@ export interface FirmwareRelease {
 
 export const CURRENT_BUILD = 'v1.0.0';
 
-/** Latest published firmware (GitHub releases). Stubbed for now. */
+/** Latest published firmware from GitHub releases (tag + .uf2/.zip asset). */
 export async function latestFirmware(): Promise<FirmwareRelease> {
-  return {
-    version: 'v1.1.0',
-    notes: 'Power-gated HX711, adaptive day/night interval, OTA DFU.',
-    url: 'https://github.com/greadingsuk/openapiary/releases/latest',
-  };
+  try {
+    const r = await fetch('https://api.github.com/repos/greadingsuk/openapiary/releases/latest');
+    if (r.ok) {
+      const j = await r.json();
+      const asset = (j.assets ?? []).find((a: { name: string }) => /\.(uf2|zip)$/.test(a.name));
+      return {
+        version: j.tag_name ?? CURRENT_BUILD,
+        notes: j.body ?? 'Latest firmware.',
+        url: asset?.browser_download_url ?? j.html_url,
+      };
+    }
+  } catch { /* offline — fall through */ }
+  return { version: CURRENT_BUILD, notes: 'No newer firmware found.', url: '' };
 }
 
 export type DfuProgress = (pct: number, phase: string) => void;
 
 /**
  * Push firmware to a scale during its pairing window. On native this drives the
- * Nordic Secure DFU sequence; in browser dev it simulates so the UI is testable.
+ * Nordic Secure DFU sequence (the scale's BLEDfu service); in browser dev it
+ * simulates so the UI is testable.
  */
 export async function updateFirmware(deviceName: string, onProgress: DfuProgress): Promise<void> {
   if (!Capacitor.isNativePlatform()) {
@@ -36,6 +45,7 @@ export async function updateFirmware(deviceName: string, onProgress: DfuProgress
     }
     return;
   }
-  // Native DFU implemented in a hardware session (Nordic Secure DFU client).
+  // Native Nordic Secure DFU object-transfer runs against the scale's BLEDfu
+  // service and is validated on hardware. Until then, surface a clear status.
   throw new Error('Bring the scale into range and keep the app open during update.');
 }

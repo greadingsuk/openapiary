@@ -65,6 +65,11 @@ const App: React.FC = () => {
         await seedDevData();
       }
       await initAuth();
+      // Hide the native splash once the first screen is ready.
+      if (Capacitor.isNativePlatform()) {
+        const { SplashScreen } = await import('@capacitor/splash-screen');
+        await SplashScreen.hide().catch(() => undefined);
+      }
     })();
   }, []);
 
