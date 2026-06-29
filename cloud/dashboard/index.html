@@ -106,11 +106,12 @@
   </div>
 </header>
 <div class="settings" id="settings">
-  <input id="apiUrl" placeholder="API URL" size="50" />
-  <input id="adminKey" type="password" placeholder="Admin Key" size="40" />
-  <button id="loadBtn">Connect</button>
-  <button class="ghost" id="forgetBtn">Forget key</button>
-  <div class="hint">The key is stored only in this browser and is sent as <code>X-Admin-Key</code>. You only need to enter it once.</div>
+  <input id="apiUrl" placeholder="API URL" size="44" />
+  <input id="email" type="email" placeholder="Email" size="26" />
+  <input id="password" type="password" placeholder="Password" size="22" />
+  <button id="loadBtn">Sign in</button>
+  <button class="ghost" id="forgetBtn">Sign out</button>
+  <div class="hint">Sign in with your Open Apiary account — the same email &amp; password you use in the app. Your admin access is tied to your account.</div>
 </div>
 <main>
   <div id="error"></div>
@@ -125,6 +126,10 @@
       <canvas id="regionChart"></canvas>
     </div>
   </section>
+  <section class="card" id="usersCard" style="display:none">
+    <h2>Users</h2>
+    <div id="usersTable"></div>
+  </section>
   <section class="card">
     <h2>Hives (anonymised)</h2>
     <div id="hivesTable"></div>
@@ -134,21 +139,36 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const LS_URL = 'oa.fleet.apiUrl';
-const LS_KEY = 'oa.fleet.adminKey';
+const LS_KEY = 'oa.fleet.apiKey';
 const LS_PERSONA = 'oa.fleet.persona';
 
 $('apiUrl').value = localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev';
-$('adminKey').value = localStorage.getItem(LS_KEY) || '';
+let apiKey = localStorage.getItem(LS_KEY) || '';
 
 let weightChart, regionChart;
 let currentPersona = localStorage.getItem(LS_PERSONA) || '';   // '' = full fleet
 let usersById = {};
 
-async function api(path) {
+async function api(path, opts = {}) {
   const base = $('apiUrl').value.replace(/\/$/, '');
-  const r = await fetch(base + path, { headers: { 'X-Admin-Key': $('adminKey').value } });
+  const r = await fetch(base + path, {
+    method: opts.method || 'GET',
+    headers: { 'X-API-Key': apiKey, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
   if (!r.ok) throw new Error(`${path}: ${r.status} ${await r.text()}`);
   return r.json();
+}
+
+async function login(email, password) {
+  const base = $('apiUrl').value.replace(/\/$/, '');
+  const r = await fetch(base + '/v1/account/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, device: 'admin-console' }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `login failed (${r.status})`);
+  return j.api_key;
 }
 
 function personaQuery() {
@@ -286,14 +306,21 @@ function renderWeightChart(readings) {
 
 $('loadBtn').onclick = async () => {
   localStorage.setItem(LS_URL, $('apiUrl').value);
-  localStorage.setItem(LS_KEY, $('adminKey').value);
-  await connect();
+  $('error').innerHTML = '';
+  try {
+    apiKey = await login($('email').value.trim(), $('password').value);
+    localStorage.setItem(LS_KEY, apiKey);
+    $('password').value = '';
+    await connect();
+  } catch (e) {
+    $('error').innerHTML = `<div class="error">${e.message}</div>`;
+  }
 };
 
 $('forgetBtn').onclick = () => {
   localStorage.removeItem(LS_KEY);
   localStorage.removeItem(LS_PERSONA);
-  $('adminKey').value = '';
+  apiKey = '';
   location.reload();
 };
 
@@ -329,7 +356,7 @@ function showLoading() {
 
 async function connect() {
   $('error').innerHTML = '';
-  if (!$('adminKey').value) {
+  if (!apiKey) {
     setSettingsOpen(true);
     return;
   }
@@ -340,12 +367,12 @@ async function connect() {
     if (whoami.is_admin) {
       const { users } = await api('/v1/admin/users');
       usersById = Object.fromEntries(users.map(u => [u.id, u]));
-      // Drop a stale persona that no longer exists.
       if (currentPersona && !usersById[currentPersona]) {
         currentPersona = '';
         localStorage.removeItem(LS_PERSONA);
       }
       renderPersonaOptions();
+      renderUsers(users);
     }
     await loadData();
   } catch (e) {
@@ -354,8 +381,50 @@ async function connect() {
   }
 }
 
-// Auto-connect silently if a key was already saved — no need to re-enter it.
-if ($('adminKey').value) {
+function renderUsers(users) {
+  $('usersCard').style.display = '';
+  const rows = users.map(u => {
+    const name = u.email || `(guest ${u.id.slice(0, 8)})`;
+    const admin = u.is_admin ? '<span class="badge" style="font-size:10px">ADMIN</span>' : '';
+    return `<tr>
+      <td>${name} ${admin}</td>
+      <td class="mono">${u.hive_count} hive${u.hive_count === 1 ? '' : 's'}</td>
+      <td>${new Date(u.created_at).toLocaleDateString()}</td>
+      <td style="text-align:right">
+        ${u.email ? `<button class="ghost" data-reset="${u.id}" style="color:var(--accent-2);border-color:var(--border)">Reset password</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  $('usersTable').innerHTML = `
+    <table>
+      <thead><tr><th>User</th><th>Hives</th><th>Joined</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  $('usersTable').querySelectorAll('[data-reset]').forEach(btn => {
+    btn.onclick = () => resetPassword(btn.getAttribute('data-reset'));
+  });
+}
+
+async function resetPassword(userId) {
+  const u = usersById[userId];
+  const custom = prompt(`Reset password for ${u?.email}.\n\nLeave blank to auto-generate a temporary password, or type a new one (8+ chars):`, '');
+  if (custom === null) return;
+  try {
+    const r = await api(`/v1/admin/users/${userId}/reset-password`, {
+      method: 'POST', body: custom.trim() ? { password: custom.trim() } : {},
+    });
+    if (r.temporary_password) {
+      alert(`Temporary password for ${r.email}:\n\n${r.temporary_password}\n\nShare it securely. They'll be signed out of all devices and must sign in with this.`);
+    } else {
+      alert(`Password updated for ${r.email}. They'll be signed out of all devices.`);
+    }
+  } catch (e) {
+    alert('Reset failed: ' + e.message);
+  }
+}
+
+// Auto-connect silently if we already have a session key.
+if (apiKey) {
   connect();
 } else {
   setSettingsOpen(true);

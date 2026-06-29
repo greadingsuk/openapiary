@@ -182,24 +182,37 @@ app.use("/v1/*", async (c, next) => {
 });
 
 app.use("/v1/admin/*", async (c, next) => {
-    // Always-on CORS for the fleet dashboard (any origin - the X-Admin-Key
-    // header is the security boundary, not the origin).
+    // CORS for the fleet dashboard (any origin — the key/credential is the
+    // security boundary, not the origin).
     if (c.req.method === "OPTIONS") {
         return new Response(null, {
             headers: {
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "X-Admin-Key, Content-Type",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "X-Admin-Key, X-API-Key, Content-Type",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Max-Age": "86400",
             },
         });
     }
-    const provided = c.req.header("X-Admin-Key") ?? "";
-    if (!c.env.ADMIN_KEY || !timingSafeEqual(provided, c.env.ADMIN_KEY)) {
+
+    // Primary auth: a normal user key (X-API-Key) belonging to an admin user.
+    // The admin signs in with the SAME email/password as the app; their account
+    // just has is_admin = 1. Fallback: the legacy shared ADMIN_KEY (bootstrap).
+    let admin: User | null = null;
+    const userKey = c.req.header("X-API-Key") ?? "";
+    if (userKey) {
+        const u = await findUserByKey(c.env.DB, userKey);
+        if (u && u.is_admin) admin = u;
+    }
+    const adminKey = c.req.header("X-Admin-Key") ?? "";
+    const legacyOk = c.env.ADMIN_KEY && timingSafeEqual(adminKey, c.env.ADMIN_KEY);
+
+    if (!admin && !legacyOk) {
         return c.json({ error: "unauthorized" }, 401, {
             "Access-Control-Allow-Origin": "*",
         });
     }
+    if (admin) c.set("user", admin);
     await next();
     c.res.headers.set("Access-Control-Allow-Origin", "*");
 });
@@ -453,7 +466,13 @@ app.get("/v1/admin/fleet/stats", async (c) => {
 
 // --- ADMIN: whoami — confirms the admin key + a label for the header ---
 app.get("/v1/admin/whoami", async (c) => {
-    return c.json({ is_admin: true, label: "Admin", scope: "fleet" });
+    const admin = c.get("user");
+    return c.json({
+        is_admin: true,
+        label: admin?.email ?? "Admin",
+        email: admin?.email ?? null,
+        scope: "fleet",
+    });
 });
 
 // --- ADMIN: list users (for the persona switcher) ---
@@ -468,6 +487,45 @@ app.get("/v1/admin/users", async (c) => {
          LIMIT 5000`
     ).all();
     return c.json({ users: results });
+});
+
+// --- ADMIN: force-reset a user's password ---
+// Body: { password? }. If omitted, a random temporary password is generated and
+// returned once so the admin can hand it to the user. Also revokes the user's
+// existing device keys so old sessions can't continue.
+app.post("/v1/admin/users/:id/reset-password", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ password?: string }>().catch(() => ({}));
+    let password = (body.password ?? "").trim();
+    let generated: string | null = null;
+    if (!password) {
+        generated = "OA-" + randomHex(5);   // 10 hex chars, human-typable
+        password = generated;
+    }
+    if (password.length < 8) {
+        return c.json({ error: "password must be at least 8 characters" }, 400, { "Access-Control-Allow-Origin": "*" });
+    }
+    const u = await c.env.DB.prepare(`SELECT id, email FROM users WHERE id = ?`).bind(id)
+        .first<{ id: string; email: string | null }>();
+    if (!u) return c.json({ error: "user not found" }, 404, { "Access-Control-Allow-Origin": "*" });
+
+    const salt = randomHex(16);
+    const hash = await derivePassword(password, salt);
+    await c.env.DB.prepare(`UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?`)
+        .bind(hash, salt, id).run();
+    // Revoke all device keys so the old password's sessions can't continue.
+    await c.env.DB.prepare(`DELETE FROM device_keys WHERE user_id = ?`).bind(id).run();
+
+    return c.json({ ok: true, email: u.email, temporary_password: generated }, 200, { "Access-Control-Allow-Origin": "*" });
+});
+
+// --- ADMIN: grant / revoke admin on a user ---
+app.post("/v1/admin/users/:id/set-admin", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ is_admin?: boolean }>().catch(() => ({}));
+    const flag = body.is_admin ? 1 : 0;
+    await c.env.DB.prepare(`UPDATE users SET is_admin = ? WHERE id = ?`).bind(flag, id).run();
+    return c.json({ ok: true, is_admin: !!flag }, 200, { "Access-Control-Allow-Origin": "*" });
 });
 
 // --- ADMIN: anonymised fleet hives ---
