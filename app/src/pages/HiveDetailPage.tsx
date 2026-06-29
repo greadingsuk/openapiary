@@ -167,10 +167,12 @@ const HiveDetailPage: React.FC = () => {
             </div>
 
             <IonSegment value={range} onIonChange={(e) => { const v = (e.detail.value as Range) ?? '7d'; if (v === 'custom') setAskCustom(true); setRange(v); }}>
-              <IonSegmentButton value="24h"><IonLabel>24h</IonLabel></IonSegmentButton>
-              <IonSegmentButton value="7d"><IonLabel>7d</IonLabel></IonSegmentButton>
-              <IonSegmentButton value="30d"><IonLabel>30d</IonLabel></IonSegmentButton>
-              <IonSegmentButton value="custom"><IonLabel>{range === 'custom' ? `${customDays}d` : 'Custom'}</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="24h"><IonLabel>1D</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="7d"><IonLabel>1W</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="30d"><IonLabel>1M</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="custom">
+                <IonLabel>{range === 'custom' ? `${customDays}D` : 'Set'}</IonLabel>
+              </IonSegmentButton>
             </IonSegment>
 
             <div className="oa-card p-4">

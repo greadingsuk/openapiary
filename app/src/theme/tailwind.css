@@ -81,6 +81,8 @@
   border: 1px solid rgba(20, 22, 26, 0.06);
   border-radius: 18px;
   box-shadow: 0 1px 3px rgba(20, 22, 26, 0.06);
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 /* Stat tile. */

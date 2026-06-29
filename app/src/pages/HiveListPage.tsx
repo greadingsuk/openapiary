@@ -74,9 +74,10 @@ const HiveListPage: React.FC = () => {
     const r = latest.get(h.id);
     const f = freshnessFor(r?.ts ?? null, now);
     return (
-      <button
+      <div
         key={h.id}
-        className="oa-card p-4 flex items-center justify-between text-left active:opacity-80 transition-opacity"
+        role="button"
+        className="oa-card p-4 flex items-center justify-between active:opacity-80 transition-opacity"
         onClick={() => router.push(`/hive/${encodeURIComponent(h.id)}`, 'forward')}
       >
         <div className="flex flex-col gap-2 min-w-0">
@@ -97,7 +98,7 @@ const HiveListPage: React.FC = () => {
           </span>
           <span className="text-xs oa-muted">kg</span>
         </div>
-      </button>
+      </div>
     );
   };
 
@@ -137,16 +138,14 @@ const HiveListPage: React.FC = () => {
             ctaHref="/add"
           />
         ) : (
-          <div className="flex flex-col gap-6 px-4 py-4">
-            {sections.map((sec) => (
-              <div key={sec.name} className="flex flex-col gap-3">
-                <div className="flex items-baseline justify-between px-1">
-                  <h2 className="text-base font-semibold" style={{ color: 'var(--oa-ink)' }}>{sec.name}</h2>
-                  <span className="text-xs oa-subtle">{sec.hives.length} hive{sec.hives.length === 1 ? '' : 's'}</span>
-                </div>
-                {sec.hives.map(renderCard)}
-              </div>
-            ))}
+          <div className="flex flex-col gap-3 px-4 py-4">
+            {sections.map((sec) => [
+              <div key={sec.name} className="flex items-baseline justify-between px-1 pt-2">
+                <h2 className="text-base font-semibold" style={{ color: 'var(--oa-ink)' }}>{sec.name}</h2>
+                <span className="text-xs oa-subtle">{sec.hives.length} hive{sec.hives.length === 1 ? '' : 's'}</span>
+              </div>,
+              ...sec.hives.map(renderCard),
+            ])}
           </div>
         )}
 
