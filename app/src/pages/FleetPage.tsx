@@ -61,7 +61,7 @@ const FleetPage: React.FC = () => {
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Fleet</IonTitle>
+          <IonTitle className="oa-title">Fleet</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent>

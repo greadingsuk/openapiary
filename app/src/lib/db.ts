@@ -237,6 +237,21 @@ export async function renameHiveLocal(hiveId: string, name: string): Promise<voi
   await db!.run('UPDATE hives SET name = ? WHERE id = ?', [name, hiveId]);
 }
 
+/** Permanently delete specific readings for a hive (e.g. an inspection skew). */
+export async function deleteReadings(hiveId: string, timestamps: number[]): Promise<void> {
+  await initDb();
+  if (!timestamps.length) return;
+  if (useMemory) {
+    for (let i = memReadings.length - 1; i >= 0; i--) {
+      const r = memReadings[i];
+      if (r.hive_id === hiveId && timestamps.includes(r.ts)) memReadings.splice(i, 1);
+    }
+    return;
+  }
+  const ph = timestamps.map(() => '?').join(',');
+  await db!.run(`DELETE FROM readings WHERE hive_id = ? AND ts IN (${ph})`, [hiveId, ...timestamps]);
+}
+
 /** Wipe all cached hives + readings (used on sign-out so accounts don't bleed). */
 export async function clearLocalData(): Promise<void> {
   await initDb();

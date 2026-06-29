@@ -4,7 +4,8 @@ import {
   IonTabs, setupIonicReact,
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { gridOutline, statsChartOutline, settingsOutline } from 'ionicons/icons';
+import { settingsOutline } from 'ionicons/icons';
+import { HiveIcon, FleetIcon } from './components/ui/HiveIcon';
 import { useEffect } from 'react';
 import { Capacitor } from '@capacitor/core';
 import HiveListPage from './pages/HiveListPage';
@@ -119,11 +120,11 @@ const App: React.FC = () => {
         </IonRouterOutlet>
         <IonTabBar slot="bottom">
           <IonTabButton tab="hives" href="/hives">
-            <IonIcon icon={gridOutline} aria-hidden="true" />
+            <HiveIcon size={24} />
             <IonLabel>Hives</IonLabel>
           </IonTabButton>
           <IonTabButton tab="fleet" href="/fleet">
-            <IonIcon icon={statsChartOutline} aria-hidden="true" />
+            <FleetIcon size={24} />
             <IonLabel>Fleet</IonLabel>
           </IonTabButton>
           <IonTabButton tab="settings" href="/settings">

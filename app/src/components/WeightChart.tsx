@@ -38,6 +38,8 @@ interface Props {
     readings: WeightPoint[];
     /** "weight" | "battery" | "temp" - default "weight" */
     metric?: "weight" | "battery" | "temp";
+    /** Pixel height of the chart area. Default 240. */
+    height?: number;
 }
 
 const SERIES = {
@@ -46,7 +48,7 @@ const SERIES = {
     temp: { label: "Temp (°C)", line: "#d2581f", fill: "rgba(210, 88, 31, 0.15)" },
 } as const;
 
-export default function WeightChart({ readings, metric = "weight" }: Props) {
+export default function WeightChart({ readings, metric = "weight", height = 240 }: Props) {
     const data = useMemo(() => {
         const points = readings.map((r) => ({
             x: r.ts,
@@ -101,7 +103,7 @@ export default function WeightChart({ readings, metric = "weight" }: Props) {
         return <div className="oa-muted text-sm py-6 text-center">No data in this range yet.</div>;
     }
     return (
-        <div style={{ height: 240 }}>
+        <div style={{ height }}>
             <Line data={data} options={options} />
         </div>
     );

@@ -76,11 +76,11 @@ const HiveListPage: React.FC = () => {
     return (
       <button
         key={h.id}
-        className="oa-card p-4 flex items-center justify-between text-left active:opacity-80 transition-opacity"
+        className="oa-card p-5 flex items-center justify-between text-left active:opacity-80 transition-opacity"
         onClick={() => router.push(`/hive/${encodeURIComponent(h.id)}`, 'forward')}
       >
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <span className="font-semibold truncate" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
+        <div className="flex flex-col gap-2 min-w-0">
+          <span className="text-lg font-semibold truncate" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
           <div className="flex items-center gap-3 pt-0.5">
             <StatusDot freshness={f} label={r ? relativeTime(r.ts, now) : 'No data'} />
             {r?.battery_v != null && (
@@ -105,7 +105,7 @@ const HiveListPage: React.FC = () => {
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Hives</IonTitle>
+          <IonTitle className="oa-title">Hives</IonTitle>
           <IonButtons slot="end">
             {!online && (
               <IonIcon icon={cloudOfflineOutline} aria-label="Offline"

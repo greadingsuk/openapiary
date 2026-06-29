@@ -4,13 +4,13 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
-  listHivesLocal, getReadingsLocal, latestReading, insertReading,
+  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings,
   type Reading,
 } from '../lib/db';
 import { useOnline } from '../lib/useOnline';
@@ -20,8 +20,8 @@ import { loadApiaries, apiaryOf, apiaryNames, setHiveApiary } from '../lib/apiar
 import WeightChart from '../components/WeightChart';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
-type Range = '24h' | '7d' | '30d';
-const RANGE_MS: Record<Range, number> = {
+type Range = '24h' | '7d' | '30d' | 'custom';
+const RANGE_MS: Record<'24h' | '7d' | '30d', number> = {
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
@@ -39,6 +39,11 @@ const HiveDetailPage: React.FC = () => {
   const [latest, setLatest] = useState<Reading | null>(null);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [range, setRange] = useState<Range>('7d');
+  const [customDays, setCustomDays] = useState<number>(90);
+  const [askCustom, setAskCustom] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showRename, setShowRename] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMove, setShowMove] = useState(false);
@@ -89,9 +94,26 @@ const HiveDetailPage: React.FC = () => {
     setToast(`Moved to ${target}`);
   }
 
+  function toggleSel(ts: number) {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(ts)) n.delete(ts); else n.add(ts);
+      return n;
+    });
+  }
+
+  async function deleteSelected() {
+    await deleteReadings(id, [...selected]);
+    setSelected(new Set());
+    setSelectMode(false);
+    await load();
+    setToast('Readings deleted');
+  }
+
   const now = Date.now();
   const f = freshnessFor(latest?.ts ?? null, now);
-  const since = now - RANGE_MS[range];
+  const rangeMs = range === 'custom' ? customDays * 86400_000 : RANGE_MS[range];
+  const since = now - rangeMs;
   const windowed = readings.filter((r) => r.ts >= since);
   const weights = windowed.map((r) => r.weight_kg).filter((w): w is number => w != null);
   const wMin = weights.length ? Math.min(...weights) : null;
@@ -139,15 +161,16 @@ const HiveDetailPage: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3">
               <StatTile label="Battery" value={latest?.battery_v?.toFixed(2) ?? '--'} unit="V" />
-              <StatTile label="Temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" />
               <StatTile label="Signal" value={latest?.rssi ?? '--'} unit="dBm" />
+              <StatTile label="Device temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" />
               <StatTile label="Seen" value={relativeTime(latest?.ts, now)} />
             </div>
 
-            <IonSegment value={range} onIonChange={(e) => setRange((e.detail.value as Range) ?? '7d')}>
+            <IonSegment value={range} onIonChange={(e) => { const v = (e.detail.value as Range) ?? '7d'; if (v === 'custom') setAskCustom(true); setRange(v); }}>
               <IonSegmentButton value="24h"><IonLabel>24h</IonLabel></IonSegmentButton>
-              <IonSegmentButton value="7d"><IonLabel>7 days</IonLabel></IonSegmentButton>
-              <IonSegmentButton value="30d"><IonLabel>30 days</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="7d"><IonLabel>7d</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="30d"><IonLabel>30d</IonLabel></IonSegmentButton>
+              <IonSegmentButton value="custom"><IonLabel>{range === 'custom' ? `${customDays}d` : 'Custom'}</IonLabel></IonSegmentButton>
             </IonSegment>
 
             <div className="oa-card p-4">
@@ -166,7 +189,7 @@ const HiveDetailPage: React.FC = () => {
 
             <div className="oa-card p-4">
               <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--oa-ink)' }}>Battery</h3>
-              <WeightChart readings={windowed} metric="battery" />
+              <WeightChart readings={windowed} metric="battery" height={120} />
             </div>
 
             <button className="oa-card p-4 flex items-center justify-between" onClick={() => setHistoryOpen((o) => !o)}>
@@ -174,17 +197,40 @@ const HiveDetailPage: React.FC = () => {
               <IonIcon icon={historyOpen ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)' }} />
             </button>
             {historyOpen && (
-              <div className="flex flex-col gap-2">
-                {[...windowed].reverse().slice(0, 100).map((r, i) => (
-                  <div key={i} className="flex items-center justify-between px-4 py-3 oa-stat">
-                    <div className="flex flex-col">
-                      <span className="oa-numeral font-semibold" style={{ color: 'var(--oa-ink)' }}>{r.weight_kg?.toFixed(2) ?? '--'} kg</span>
-                      <span className="text-xs oa-subtle">{new Date(r.ts).toLocaleString()}</span>
-                    </div>
-                    <span className="text-sm oa-muted">{r.battery_v?.toFixed(2) ?? '--'} V</span>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div className="flex items-center justify-between px-1">
+                  <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
+                    onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
+                    {selectMode ? 'Cancel' : 'Select'}
+                  </button>
+                  {selectMode && (
+                    <button className="text-sm font-semibold" disabled={selected.size === 0}
+                      style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
+                      onClick={() => setConfirmDelete(true)}>
+                      Delete {selected.size || ''}
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  {[...windowed].reverse().slice(0, 200).map((r) => {
+                    const sel = selected.has(r.ts);
+                    return (
+                      <div key={r.ts} className="flex items-center gap-3 px-4 py-3 oa-stat"
+                        onClick={() => selectMode && toggleSel(r.ts)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
+                        {selectMode && (
+                          <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
+                            style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
+                        )}
+                        <div className="flex flex-col flex-1">
+                          <span className="oa-numeral font-semibold" style={{ color: 'var(--oa-ink)' }}>{r.weight_kg?.toFixed(2) ?? '--'} kg</span>
+                          <span className="text-xs oa-subtle">{new Date(r.ts).toLocaleString()}</span>
+                        </div>
+                        <span className="text-sm oa-muted">{r.battery_v?.toFixed(2) ?? '--'} V</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -204,6 +250,13 @@ const HiveDetailPage: React.FC = () => {
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Save', handler: (d) => { void doRename(d.name); } }]} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
+        <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
+          message="Number of days to show (1\u2013730)."
+          inputs={[{ name: 'days', type: 'number', value: customDays, min: 1, max: 730 }]}
+          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Apply', handler: (d) => { const n = Math.max(1, Math.min(730, parseInt(d.days, 10) || 90)); setCustomDays(n); setRange('custom'); } }]} />
+        <IonAlert isOpen={confirmDelete} onDidDismiss={() => setConfirmDelete(false)} header="Delete readings"
+          message={`Permanently delete ${selected.size} reading${selected.size === 1 ? '' : 's'}? This can't be undone.`}
+          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Delete', role: 'destructive', handler: () => { void deleteSelected(); } }]} />
       </IonContent>
     </IonPage>
   );
