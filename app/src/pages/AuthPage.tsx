@@ -8,7 +8,7 @@ import {
 } from '@ionic/react';
 import { useState } from 'react';
 import { signUp, signIn, startAnonymous } from '../lib/auth';
-import Honeycomb from '../components/ui/Honeycomb';
+import Logo from '../components/ui/Logo';
 
 type Mode = 'welcome' | 'signup' | 'login';
 
@@ -39,7 +39,7 @@ const AuthPage: React.FC = () => {
       <IonContent>
         <div className="flex flex-col items-center min-h-full px-6 pt-16 pb-10">
           {/* Brand hero */}
-          <Honeycomb size={96} fillFraction={0.6} />
+          <Logo size={104} />
           <h1 className="oa-numeral text-3xl font-bold mt-4" style={{ color: 'var(--oa-honey-700)' }}>
             Open Apiary
           </h1>

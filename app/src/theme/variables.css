@@ -24,17 +24,17 @@
   --oa-kraft-600: #5e523c;
   --oa-kraft-700: #3a3328;
 
-  --oa-surface-base: #fffdf7;
-  --oa-surface-1:    #fff8e6;
-  --oa-surface-2:    #f5efe2;
-  --oa-surface-3:    #e8dcc4;
+  --oa-surface-base: #f2f3f5;
+  --oa-surface-1:    #ffffff;
+  --oa-surface-2:    #f7f8fa;
+  --oa-surface-3:    #eef0f3;
 
-  --oa-ink:        #1a1410;
-  --oa-ink-muted:  #5e523c;
-  --oa-ink-subtle: #6e6047;
+  --oa-ink:        #1c1d1f;
+  --oa-ink-muted:  #5b6066;
+  --oa-ink-subtle: #8a9099;
   --oa-on-accent:  #14100c;
 
-  --oa-glass-border: rgba(26, 20, 16, 0.12);
+  --oa-glass-border: rgba(20, 22, 26, 0.08);
 
   --oa-data-weight:  #b8780a;
   --oa-data-battery: #5f9145;
@@ -47,10 +47,10 @@
   --oa-font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
 
   /* ---- Elevation / glow ---- */
-  --oa-shadow-1: 0 1px 2px rgba(58, 51, 40, 0.10);
-  --oa-shadow-2: 0 4px 12px rgba(58, 51, 40, 0.14);
-  --oa-shadow-3: 0 10px 24px rgba(58, 51, 40, 0.18);
-  --oa-glow:     0 0 0 1px rgba(245, 169, 31, 0.25), 0 6px 22px rgba(245, 169, 31, 0.30);
+  --oa-shadow-1: 0 1px 2px rgba(20, 22, 26, 0.05);
+  --oa-shadow-2: 0 2px 10px rgba(20, 22, 26, 0.07);
+  --oa-shadow-3: 0 8px 24px rgba(20, 22, 26, 0.10);
+  --oa-glow:     0 0 0 1px rgba(245, 169, 31, 0.25), 0 6px 22px rgba(245, 169, 31, 0.28);
 
   /* ---------------------------------------------------------------- */
   /* Ionic core variables                                              */
@@ -58,36 +58,36 @@
   --ion-font-family: var(--oa-font-body);
 
   --ion-background-color: var(--oa-surface-base);
-  --ion-background-color-rgb: 255, 253, 247;
+  --ion-background-color-rgb: 242, 243, 245;
 
   --ion-text-color: var(--oa-ink);
-  --ion-text-color-rgb: 26, 20, 16;
+  --ion-text-color-rgb: 28, 29, 31;
 
   --ion-border-color: var(--oa-glass-border);
 
-  /* Stepped backgrounds Ionic derives for cards, items, ripples, etc. */
-  --ion-color-step-50:  #fbf4e3;
-  --ion-color-step-100: #f6eed9;
-  --ion-color-step-150: #f1e7cf;
-  --ion-color-step-200: #ece1c5;
-  --ion-color-step-250: #e7dbbb;
-  --ion-color-step-300: #e2d4b1;
-  --ion-color-step-350: #ddcea7;
-  --ion-color-step-400: #d8c89d;
-  --ion-color-step-450: #d3c293;
-  --ion-color-step-500: #cebb89;
-  --ion-color-step-550: #b6a577;
-  --ion-color-step-600: #9e8f66;
-  --ion-color-step-650: #877954;
-  --ion-color-step-700: #6f6343;
-  --ion-color-step-750: #574d31;
-  --ion-color-step-800: #403720;
-  --ion-color-step-850: #28220e;
+  /* Stepped backgrounds Ionic derives for cards, items, ripples, etc. (neutral grey) */
+  --ion-color-step-50:  #edeef0;
+  --ion-color-step-100: #e3e5e8;
+  --ion-color-step-150: #d8dadf;
+  --ion-color-step-200: #cdd0d6;
+  --ion-color-step-250: #c2c6cd;
+  --ion-color-step-300: #b7bcc4;
+  --ion-color-step-350: #aab0b9;
+  --ion-color-step-400: #9aa1ab;
+  --ion-color-step-450: #8a929d;
+  --ion-color-step-500: #7a838f;
+  --ion-color-step-550: #6c747f;
+  --ion-color-step-600: #5d646e;
+  --ion-color-step-650: #4e545d;
+  --ion-color-step-700: #3f444b;
+  --ion-color-step-750: #30343a;
+  --ion-color-step-800: #242729;
+  --ion-color-step-850: #1f2123;
   --ion-color-step-900: var(--oa-ink);
 
-  /* Toolbars + items sit on the warm card surface, not pure white. */
+  /* Toolbars + tab bar are clean white; content sits on soft grey. */
   --ion-toolbar-background: var(--oa-surface-1);
-  --ion-toolbar-color: var(--oa-honey-700);
+  --ion-toolbar-color: var(--oa-ink);
   --ion-toolbar-border-color: var(--oa-glass-border);
 
   --ion-item-background: var(--oa-surface-1);
@@ -95,7 +95,7 @@
   --ion-item-border-color: var(--oa-glass-border);
 
   --ion-tab-bar-background: var(--oa-surface-1);
-  --ion-tab-bar-color: var(--oa-kraft-400);
+  --ion-tab-bar-color: var(--oa-ink-subtle);
   --ion-tab-bar-color-selected: var(--oa-honey-600);
 
   --ion-card-background: var(--oa-surface-1);

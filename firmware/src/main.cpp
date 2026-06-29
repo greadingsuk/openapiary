@@ -23,6 +23,10 @@
 #include "persist.h"
 #include "gatt_config.h"
 
+// Buttonless OTA DFU — lets the phone push firmware over BLE during the pairing
+// window. The Adafruit bootloader handles the actual Secure DFU after reboot.
+static BLEDfu bledfu;
+
 // Provided by cal_mode.cpp
 extern void enterCalibrationMode();
 
@@ -99,6 +103,7 @@ void setup() {
     // 5. Register the Config GATT service and run a short connectable pairing
     //    window so the app can set the name + seed the clock. After it closes,
     //    loop() resumes the low-power advert-only behaviour.
+    bledfu.begin();              // OTA DFU available while connectable
     OAConfig::begin(&g_state);
     runPairingWindow();
 }

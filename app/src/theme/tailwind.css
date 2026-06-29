@@ -73,23 +73,23 @@
   clip-path: polygon(25% 6%, 75% 6%, 100% 50%, 75% 94%, 25% 94%, 0% 50%);
 }
 
-/* ---- Component surfaces (style guide §8) ---- */
+/* ---- Component surfaces ---- */
 
-/* Warm card — the default content surface above surface-base. */
+/* Clean white card — the default content surface above the soft-grey base. */
 .oa-card {
-  background: var(--color-surface-1, #fff8e6);
-  border: 1px solid var(--color-comb-fg, rgba(26, 20, 16, 0.12));
-  border-color: rgba(26, 20, 16, 0.12);
-  border-radius: 22px;
-  box-shadow: 0 4px 12px rgba(58, 51, 40, 0.14);
+  background: #ffffff;
+  border: 1px solid rgba(20, 22, 26, 0.06);
+  border-radius: 18px;
+  box-shadow: 0 1px 3px rgba(20, 22, 26, 0.06);
 }
 
-/* Stat tile with a hex-clipped accent corner. */
+/* Stat tile. */
 .oa-stat {
-  background: var(--color-surface-1, #fff8e6);
-  border: 1px solid rgba(26, 20, 16, 0.12);
-  border-radius: 14px;
-  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid rgba(20, 22, 26, 0.06);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(20, 22, 26, 0.06);
 }
 
 /* Status dot — always paired with a text label (never colour alone). */

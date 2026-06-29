@@ -6,12 +6,14 @@ import {
 import { IonReactRouter } from '@ionic/react-router';
 import { gridOutline, statsChartOutline, settingsOutline } from 'ionicons/icons';
 import { useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import HiveListPage from './pages/HiveListPage';
 import HiveDetailPage from './pages/HiveDetailPage';
 import AddHivePage from './pages/AddHivePage';
 import SettingsPage from './pages/SettingsPage';
 import FleetPage from './pages/FleetPage';
 import AuthPage from './pages/AuthPage';
+import FirmwarePage from './pages/FirmwarePage';
 import { initDb } from './lib/db';
 import { startAutoSync, stopAutoSync } from './lib/sync';
 import { initAuth, useAuth } from './lib/auth';
@@ -53,8 +55,16 @@ const App: React.FC = () => {
   const auth = useAuth();
 
   useEffect(() => {
-    void initDb();
-    void initAuth();
+    void (async () => {
+      await initDb();
+      // Browser preview: seed mock hives + auto-login so the UI is reviewable
+      // without a backend, BLE, or sign-in. Stripped from native builds.
+      if (import.meta.env.DEV && Capacitor.getPlatform() === 'web') {
+        const { seedDevData } = await import('./lib/devSeed');
+        await seedDevData();
+      }
+      await initAuth();
+    })();
   }, []);
 
   // Auto-sync only runs while signed in.
@@ -102,6 +112,7 @@ const App: React.FC = () => {
           <Route exact path="/add" component={AddHivePage} />
           <Route exact path="/settings" component={SettingsPage} />
           <Route exact path="/hive/:id" component={HiveDetailPage} />
+          <Route exact path="/hive/:id/firmware" component={FirmwarePage} />
           <Route exact path="/">
             <Redirect to="/hives" />
           </Route>
