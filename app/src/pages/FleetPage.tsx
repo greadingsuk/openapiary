@@ -86,7 +86,7 @@ const FleetPage: React.FC = () => {
               <StatTile label="Total" value={totalWeight.toFixed(1)} unit="kg" />
             </div>
 
-            <h2 className="px-4 pt-2 pb-1 text-sm uppercase tracking-wide oa-subtle">
+            <h2 className="oa-section px-4 pt-2 pb-1 text-sm oa-subtle">
               Recent activity
             </h2>
             <div className="flex flex-col gap-3 px-4 pb-6">

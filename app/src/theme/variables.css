@@ -4,16 +4,17 @@
  * Keep colour values in sync with branding/tokens/tokens.css. */
 
 :root {
-  /* ---- Brand palette — Black Mountain Honey inspired (cream / black / orange) ---- */
-  --oa-honey-50:  #fdf4e8;
-  --oa-honey-100: #f9e1c1;
-  --oa-honey-200: #f4c98d;
-  --oa-honey-300: #f0ad59;
-  --oa-honey-400: #ee8b2a;  /* BMH primary orange (buttons / accent) */
-  --oa-honey-500: #db761a;
-  --oa-honey-600: #b85f12;  /* orange text on cream */
-  --oa-honey-700: #8f490d;
-  --oa-honey-800: #5c2f07;
+  /* ---- Brand palette — Black Mountain Honey (exact refs) ----
+     orange #F2800F · background #FBF8F2 · black #000000 · dark brown #120805 */
+  --oa-honey-50:  #fdf2e6;
+  --oa-honey-100: #fbddbb;
+  --oa-honey-200: #f8c184;
+  --oa-honey-300: #f5a04d;
+  --oa-honey-400: #f2800f;  /* BMH primary orange */
+  --oa-honey-500: #d66e0a;
+  --oa-honey-600: #b05908;  /* orange text on cream */
+  --oa-honey-700: #834206;
+  --oa-honey-800: #4f2803;
 
   --oa-kraft-50:  #f5efe2;
   --oa-kraft-100: #e8dcc4;
@@ -24,19 +25,21 @@
   --oa-kraft-600: #5e523c;
   --oa-kraft-700: #3a3328;
 
-  /* Warm cream canvas, white cards (BMH body uses warm off-white). */
-  --oa-surface-base: #f6f1e7;
+  /* Warm cream canvas, white cards. */
+  --oa-surface-base: #fbf8f2;
   --oa-surface-1:    #ffffff;
-  --oa-surface-2:    #faf6ee;
-  --oa-surface-3:    #efe8da;
+  --oa-surface-2:    #f6f1e7;
+  --oa-surface-3:    #efe7d8;
 
-  /* Near-black warm ink (BMH header/footer bars + body text). */
-  --oa-ink:        #17130c;
+  /* Dark-brown ink + the near-black bars (BMH header/footer). */
+  --oa-ink:        #120805;
   --oa-ink-muted:  #5d564a;
   --oa-ink-subtle: #8b8475;
   --oa-on-accent:  #ffffff;
+  --oa-bar:        #120805;   /* header + tab bar background */
+  --oa-on-bar:     #f3ece0;   /* text/icons on the dark bars */
 
-  --oa-glass-border: rgba(23, 19, 12, 0.08);
+  --oa-glass-border: rgba(18, 8, 5, 0.08);
 
   --oa-data-weight:  #db761a;
   --oa-data-battery: #5f9145;
@@ -60,7 +63,7 @@
   --ion-font-family: var(--oa-font-body);
 
   --ion-background-color: var(--oa-surface-base);
-  --ion-background-color-rgb: 246, 241, 231;
+  --ion-background-color-rgb: 251, 248, 242;
 
   --ion-text-color: var(--oa-ink);
   --ion-text-color-rgb: 23, 19, 12;
@@ -87,18 +90,19 @@
   --ion-color-step-850: #211e15;
   --ion-color-step-900: var(--oa-ink);
 
-  /* Toolbars + tab bar are clean white; content sits on soft grey. */
-  --ion-toolbar-background: var(--oa-surface-1);
-  --ion-toolbar-color: var(--oa-ink);
-  --ion-toolbar-border-color: var(--oa-glass-border);
+  /* Dark-brown header bar (BMH). */
+  --ion-toolbar-background: var(--oa-bar);
+  --ion-toolbar-color: var(--oa-on-bar);
+  --ion-toolbar-border-color: transparent;
 
   --ion-item-background: var(--oa-surface-1);
   --ion-item-color: var(--oa-ink);
   --ion-item-border-color: var(--oa-glass-border);
 
-  --ion-tab-bar-background: var(--oa-surface-1);
-  --ion-tab-bar-color: var(--oa-ink-subtle);
-  --ion-tab-bar-color-selected: var(--oa-honey-600);
+  /* Dark-brown tab bar (BMH footer). */
+  --ion-tab-bar-background: var(--oa-bar);
+  --ion-tab-bar-color: rgba(243, 236, 224, 0.6);
+  --ion-tab-bar-color-selected: var(--oa-honey-400);
 
   --ion-card-background: var(--oa-surface-1);
 
@@ -175,6 +179,13 @@
 h1, h2, h3, h4, h5, h6,
 ion-title {
   font-family: var(--oa-font-display);
+}
+
+/* All toolbar titles uppercase (BMH nav style). */
+ion-title {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
 }
 
 .oa-numeral {

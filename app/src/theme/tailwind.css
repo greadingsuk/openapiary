@@ -94,12 +94,21 @@
   box-shadow: 0 1px 3px rgba(20, 22, 26, 0.06);
 }
 
-/* Large, left-aligned page titles with comfortable padding (SwitchBot-style). */
+/* Large, left-aligned page titles with comfortable padding (BMH-style, bold uppercase). */
 ion-title.oa-title {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   padding-inline-start: 20px;
   text-align: start;
+}
+
+/* Section headers (apiary names) — bold uppercase to match BMH. */
+.oa-section {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 800;
 }
 
 /* Status dot — always paired with a text label (never colour alone). */

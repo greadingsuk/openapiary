@@ -123,7 +123,7 @@ const AddHivePage: React.FC = () => {
             >
               <IonIcon
                 icon={bluetoothOutline}
-                style={{ fontSize: 34, color: scanning ? 'var(--oa-honey-600)' : 'var(--oa-kraft-500)' }}
+                style={{ fontSize: 34, color: scanning ? 'var(--oa-honey-500)' : 'var(--oa-honey-400)' }}
               />
             </div>
           </div>

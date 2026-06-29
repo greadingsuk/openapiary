@@ -141,7 +141,7 @@ const HiveListPage: React.FC = () => {
           <div className="flex flex-col gap-3 px-4 py-4">
             {sections.map((sec) => [
               <div key={sec.name} className="flex items-baseline justify-between px-1 pt-2">
-                <h2 className="text-base font-semibold" style={{ color: 'var(--oa-ink)' }}>{sec.name}</h2>
+                <h2 className="oa-section text-base" style={{ color: 'var(--oa-ink)' }}>{sec.name}</h2>
                 <span className="text-xs oa-subtle">{sec.hives.length} hive{sec.hives.length === 1 ? '' : 's'}</span>
               </div>,
               ...sec.hives.map(renderCard),

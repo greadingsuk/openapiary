@@ -69,6 +69,14 @@ const App: React.FC = () => {
       if (Capacitor.isNativePlatform()) {
         const { SplashScreen } = await import('@capacitor/splash-screen');
         await SplashScreen.hide().catch(() => undefined);
+        // Dark header → light status-bar text.
+        try {
+          const { StatusBar, Style } = await import('@capacitor/status-bar');
+          await StatusBar.setStyle({ style: Style.Dark });
+          if (Capacitor.getPlatform() === 'android') {
+            await StatusBar.setBackgroundColor({ color: '#120805' });
+          }
+        } catch { /* status bar plugin optional */ }
       }
     })();
   }, []);
