@@ -76,11 +76,11 @@ const HiveListPage: React.FC = () => {
     return (
       <button
         key={h.id}
-        className="oa-card p-5 flex items-center justify-between text-left active:opacity-80 transition-opacity"
+        className="oa-card p-4 flex items-center justify-between text-left active:opacity-80 transition-opacity"
         onClick={() => router.push(`/hive/${encodeURIComponent(h.id)}`, 'forward')}
       >
         <div className="flex flex-col gap-2 min-w-0">
-          <span className="text-lg font-semibold truncate" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
+          <span className="text-base font-semibold truncate" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
           <div className="flex items-center gap-3 pt-0.5">
             <StatusDot freshness={f} label={r ? relativeTime(r.ts, now) : 'No data'} />
             {r?.battery_v != null && (
@@ -92,7 +92,7 @@ const HiveListPage: React.FC = () => {
           </div>
         </div>
         <div className="flex flex-col items-end shrink-0 pl-3">
-          <span className="oa-numeral text-3xl font-bold leading-none" style={{ color: 'var(--oa-ink)' }}>
+          <span className="oa-numeral text-2xl font-bold leading-none" style={{ color: 'var(--oa-honey-700)' }}>
             {r?.weight_kg != null ? r.weight_kg.toFixed(1) : '--'}
           </span>
           <span className="text-xs oa-muted">kg</span>
