@@ -121,7 +121,7 @@ export async function getReadings(s: Settings, hiveId: string): Promise<HiveRead
 export async function patchHive(
   s: Settings,
   hiveId: string,
-  patch: { name?: string },
+  patch: { name?: string; region?: string; lat?: number; lon?: number },
 ): Promise<void> {
   const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}`, {
     method: 'PATCH',

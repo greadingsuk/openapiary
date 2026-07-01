@@ -77,9 +77,18 @@ export async function initDb(): Promise<void> {
 
 export async function upsertHive(h: Hive): Promise<void> {
   await initDb();
-  if (useMemory) { memHives.set(h.id, h); return; }
+  if (useMemory) {
+    const existing = memHives.get(h.id);
+    // Preserve a user-set name; only set it on first insert.
+    memHives.set(h.id, existing ? { ...existing } : h);
+    return;
+  }
+  // Insert the hive on first sight, but NEVER overwrite an existing name — the
+  // user may have renamed it. Every BLE advert calls this, so an upsert that
+  // replaced the name would keep resetting it back to "OA-XXXX".
   await db!.run(
-    'INSERT OR REPLACE INTO hives (id, name, created_at) VALUES (?, ?, ?)',
+    `INSERT INTO hives (id, name, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
     [h.id, h.name, h.created_at],
   );
 }

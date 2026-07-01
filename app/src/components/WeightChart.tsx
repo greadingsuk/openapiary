@@ -1,7 +1,7 @@
 // Lightweight Chart.js wrapper for hive weight & battery trends.
 // Registers only the controllers/scales we use to keep bundle small.
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -49,6 +49,7 @@ const SERIES = {
 } as const;
 
 export default function WeightChart({ readings, metric = "weight", height = 240 }: Props) {
+    const chartRef = useRef<ChartJS<'line'> | null>(null);
     const data = useMemo(() => {
         const points = readings.map((r) => ({
             x: r.ts,
@@ -102,9 +103,18 @@ export default function WeightChart({ readings, metric = "weight", height = 240 
     if (!readings.length) {
         return <div className="oa-muted text-sm py-6 text-center">No data in this range yet.</div>;
     }
+    // On touch screens Chart.js leaves the tooltip stuck because there's no
+    // "mouse leave". Clear active elements + tooltip when the finger lifts.
+    const clearTooltip = () => {
+        const ch = chartRef.current;
+        if (!ch) return;
+        ch.setActiveElements([]);
+        ch.tooltip?.setActiveElements([], { x: 0, y: 0 });
+        ch.update('none');
+    };
     return (
-        <div style={{ height }}>
-            <Line data={data} options={options} />
+        <div style={{ height }} onTouchEnd={clearTooltip} onTouchCancel={clearTooltip} onMouseLeave={clearTooltip}>
+            <Line ref={chartRef} data={data} options={options} />
         </div>
     );
 }

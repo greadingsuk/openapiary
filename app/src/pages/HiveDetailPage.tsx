@@ -16,7 +16,8 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
-import { loadApiaries, apiaryOf, apiaryNames, setHiveApiary } from '../lib/apiaries';
+import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
+import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
@@ -47,7 +48,9 @@ const HiveDetailPage: React.FC = () => {
   const [showRename, setShowRename] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMove, setShowMove] = useState(false);
+  const [showNewApiary, setShowNewApiary] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [collapse, setCollapse] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
 
   async function load() {
@@ -91,15 +94,25 @@ const HiveDetailPage: React.FC = () => {
   async function moveTo(target: string) {
     await setHiveApiary(id, target);
     setApiary(target);
+    // Mirror the apiary's location to the cloud hive `region` so the admin
+    // console's regional analytics group this hive correctly.
+    try {
+      const ap = await loadApiaries();
+      const meta = apiaryMeta(ap, target);
+      const s = await loadSettings();
+      if (s.apiKey && (typeof navigator === 'undefined' || navigator.onLine)) {
+        await patchHive(s, id, { region: meta.location || target, lat: meta.lat, lon: meta.lon });
+      }
+    } catch { /* offline — region syncs next time */ }
     setToast(`Moved to ${target}`);
   }
 
-  function toggleSel(ts: number) {
-    setSelected((prev) => {
-      const n = new Set(prev);
-      if (n.has(ts)) n.delete(ts); else n.add(ts);
-      return n;
-    });
+  async function createApiary(nameIn: string, location: string) {
+    const apName = (nameIn ?? '').trim();
+    if (!apName) return;
+    await upsertApiary(apName, location.trim() ? { location: location.trim() } : undefined);
+    setKnownApiaries(apiaryNames(await loadApiaries()).filter((n) => n !== 'Unassigned'));
+    await moveTo(apName);
   }
 
   async function deleteSelected() {
@@ -122,6 +135,30 @@ const HiveDetailPage: React.FC = () => {
   const fillPct = latest?.weight_kg != null
     ? Math.round(Math.max(0, Math.min(1, (latest.weight_kg - EMPTY_KG) / (FULL_KG - EMPTY_KG))) * 100)
     : null;
+
+  // Collapse consecutive identical weights into one row so a settled scale
+  // doesn't show 30+ duplicate lines. Each group carries all its timestamps
+  // so selecting/deleting a group affects every underlying reading.
+  interface HistGroup { weight: number | null; battery: number | null; lastTs: number; tsList: number[]; }
+  const historyGroups: HistGroup[] = [];
+  for (const r of [...windowed].reverse()) {
+    const w = r.weight_kg ?? null;
+    const prev = historyGroups[historyGroups.length - 1];
+    if (collapse && prev && prev.weight === w) {
+      prev.tsList.push(r.ts);
+    } else {
+      historyGroups.push({ weight: w, battery: r.battery_v ?? null, lastTs: r.ts, tsList: [r.ts] });
+    }
+  }
+
+  function toggleGroup(g: HistGroup) {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      const allSel = g.tsList.every((t) => n.has(t));
+      for (const t of g.tsList) { if (allSel) n.delete(t); else n.add(t); }
+      return n;
+    });
+  }
 
   return (
     <IonPage>
@@ -201,10 +238,15 @@ const HiveDetailPage: React.FC = () => {
             {historyOpen && (
               <>
                 <div className="flex items-center justify-between px-1">
-                  <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
-                    onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
-                    {selectMode ? 'Cancel' : 'Select'}
-                  </button>
+                  <div className="flex items-center gap-4">
+                    <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
+                      onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
+                      {selectMode ? 'Cancel' : 'Select'}
+                    </button>
+                    <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
+                      {collapse ? 'Show all' : 'Group repeats'}
+                    </button>
+                  </div>
                   {selectMode && (
                     <button className="text-sm font-semibold" disabled={selected.size === 0}
                       style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
@@ -214,20 +256,25 @@ const HiveDetailPage: React.FC = () => {
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
-                  {[...windowed].reverse().slice(0, 200).map((r) => {
-                    const sel = selected.has(r.ts);
+                  {historyGroups.slice(0, 200).map((g) => {
+                    const sel = g.tsList.some((t) => selected.has(t));
                     return (
-                      <div key={r.ts} className="flex items-center gap-3 px-4 py-3 oa-stat"
-                        onClick={() => selectMode && toggleSel(r.ts)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
+                      <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
+                        onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
                         {selectMode && (
                           <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
                             style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
                         )}
                         <div className="flex flex-col flex-1">
-                          <span className="oa-numeral font-semibold" style={{ color: 'var(--oa-ink)' }}>{r.weight_kg?.toFixed(2) ?? '--'} kg</span>
-                          <span className="text-xs oa-subtle">{new Date(r.ts).toLocaleString()}</span>
+                          <span className="oa-numeral font-semibold flex items-center gap-2" style={{ color: 'var(--oa-ink)' }}>
+                            {g.weight?.toFixed(2) ?? '--'} kg
+                            {g.tsList.length > 1 && (
+                              <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
+                            )}
+                          </span>
+                          <span className="text-xs oa-subtle">{new Date(g.lastTs).toLocaleString()}</span>
                         </div>
-                        <span className="text-sm oa-muted">{r.battery_v?.toFixed(2) ?? '--'} V</span>
+                        <span className="text-sm oa-muted">{g.battery?.toFixed(2) ?? '--'} V</span>
                       </div>
                     );
                   })}
@@ -246,7 +293,15 @@ const HiveDetailPage: React.FC = () => {
           ]} />
         <IonActionSheet isOpen={showMove} onDidDismiss={() => setShowMove(false)} header="Move to apiary"
           buttons={[...knownApiaries.map((n) => ({ text: n, handler: () => moveTo(n) })),
+            { text: '+ New apiary\u2026', handler: () => setShowNewApiary(true) },
             { text: 'Cancel', role: 'cancel' as const }]} />
+        <IonAlert isOpen={showNewApiary} onDidDismiss={() => setShowNewApiary(false)} header="New apiary"
+          message="Name your apiary and where it lives. The location powers the regional map in the admin console."
+          inputs={[
+            { name: 'apName', type: 'text', placeholder: 'Apiary name (e.g. Back Garden)' },
+            { name: 'location', type: 'text', placeholder: 'Postcode or place (e.g. CH7 4EL)' },
+          ]}
+          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Create', handler: (d) => { void createApiary(d.apName, d.location); } }]} />
         <IonAlert isOpen={showRename} onDidDismiss={() => setShowRename(false)} header="Rename hive"
           message="Up to 16 characters. Updates here, in the cloud, and on the scale if in range."
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}

@@ -141,8 +141,10 @@ const $ = (id) => document.getElementById(id);
 const LS_URL = 'oa.fleet.apiUrl';
 const LS_KEY = 'oa.fleet.apiKey';
 const LS_PERSONA = 'oa.fleet.persona';
+const LS_EMAIL = 'oa.fleet.lastEmail';
 
 $('apiUrl').value = localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev';
+$('email').value = localStorage.getItem(LS_EMAIL) || '';
 let apiKey = localStorage.getItem(LS_KEY) || '';
 
 let weightChart, regionChart;
@@ -308,8 +310,10 @@ $('loadBtn').onclick = async () => {
   localStorage.setItem(LS_URL, $('apiUrl').value);
   $('error').innerHTML = '';
   try {
-    apiKey = await login($('email').value.trim(), $('password').value);
+    const email = $('email').value.trim();
+    apiKey = await login(email, $('password').value);
     localStorage.setItem(LS_KEY, apiKey);
+    localStorage.setItem(LS_EMAIL, email);
     $('password').value = '';
     await connect();
   } catch (e) {

@@ -22,7 +22,7 @@ const HiveListPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [hives, setHives] = useState<Hive[]>([]);
   const [latest, setLatest] = useState<Map<string, Reading>>(new Map());
-  const [apiaries, setApiaries] = useState<ApiaryStore>({ assign: {}, order: [] });
+  const [apiaries, setApiaries] = useState<ApiaryStore>({ assign: {}, order: [], meta: {} });
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>('name');
   const [sortOpen, setSortOpen] = useState(false);

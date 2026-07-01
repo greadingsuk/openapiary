@@ -334,7 +334,6 @@ app.post("/v1/readings", async (c) => {
         `INSERT INTO hives (id, name, owner_key_id, user_id, created_at, public)
          VALUES (?, ?, 'multi', ?, ?, 0)
          ON CONFLICT(id) DO UPDATE SET
-            name    = COALESCE(excluded.name, hives.name),
             user_id = COALESCE(hives.user_id, excluded.user_id)`
     )
         .bind(body.hiveId, body.deviceName ?? body.hiveId, user.id, Date.now())

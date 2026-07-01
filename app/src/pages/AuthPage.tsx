@@ -4,7 +4,7 @@
 
 import {
   IonContent, IonPage, IonButton, IonInput, IonItem, IonList,
-  IonSpinner, IonText,
+  IonSpinner, IonText, IonCheckbox,
 } from '@ionic/react';
 import { useState } from 'react';
 import { signUp, signIn, startAnonymous } from '../lib/auth';
@@ -12,10 +12,15 @@ import Logo from '../components/ui/Logo';
 
 type Mode = 'welcome' | 'signup' | 'login';
 
+const REMEMBER_KEY = 'openapiary.lastEmail';
+
 const AuthPage: React.FC = () => {
   const [mode, setMode] = useState<Mode>('welcome');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => {
+    try { return localStorage.getItem(REMEMBER_KEY) ?? ''; } catch { return ''; }
+  });
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,6 +28,11 @@ const AuthPage: React.FC = () => {
     setBusy(true);
     setError(null);
     try {
+      // Remember the email for next time (faster re-login).
+      try {
+        if (remember && email.trim()) localStorage.setItem(REMEMBER_KEY, email.trim());
+        else localStorage.removeItem(REMEMBER_KEY);
+      } catch { /* storage unavailable */ }
       await fn();
       // On success the auth store flips `authed` and App swaps to the tabs.
     } catch (e) {
@@ -89,6 +99,15 @@ const AuthPage: React.FC = () => {
                       value={password}
                       onIonInput={(e) => setPassword(e.detail.value ?? '')}
                     />
+                  </IonItem>
+                  <IonItem>
+                    <IonCheckbox
+                      checked={remember}
+                      onIonChange={(e) => setRemember(e.detail.checked)}
+                      labelPlacement="end"
+                    >
+                      Remember my email
+                    </IonCheckbox>
                   </IonItem>
                 </IonList>
 
