@@ -2,7 +2,7 @@
 
 > Open-source BLE beehive scale. A Seeed XIAO nRF52840 reads four load cells
 > through an HX711, broadcasts the weight as an [unencrypted BTHome v2](https://bthome.io/format/)
-> advert every 15 minutes, and goes back to sleep. A phone app (Ionic + Capacitor)
+> advert at an adaptive cadence (1 min day / 5 min night once time is seeded), and goes back to sleep. A phone app (Ionic + Capacitor)
 > listens passively, stores readings locally, and optionally syncs them to a
 > Cloudflare Worker backed by D1 (SQLite).
 
@@ -14,23 +14,28 @@ Auto-discovered by Home Assistant out of the box.
 | Path        | What lives here |
 |-------------|-----------------|
 | `firmware/` | PlatformIO project for the XIAO nRF52840 (Arduino framework + Bluefruit) |
-| `app/`      | Ionic React + Capacitor app — currently a stub, see `app/README.md` |
+| `app/`      | Ionic React + Capacitor app (BLE scan/pair, local SQLite cache, sync, charts, rename/time push) |
 | `cloud/`    | Cloudflare Worker (Hono) + D1 schema |
-| `docs/`     | Migration plan, hardware build guide, Home Assistant notes |
+| `docs/`     | Live to-do plan, hardware build guide, Home Assistant notes |
 | `hardware/` | CAD, BOM, wiring diagrams |
 
 ## Quickstart
 
-See [`docs/migration-plan.md`](docs/migration-plan.md) for the full build plan.
+See [`docs/todo-plan.md`](docs/todo-plan.md) for the live build plan and current status.
 Short version:
 
 1. **Firmware** — open `firmware/` in VS Code with the PlatformIO extension, hit Build, double-tap reset on the XIAO and Upload.
-2. **App** — follow `app/README.md` to finish the Ionic scaffold, then `npm run dev`.
-3. **Cloud** *(optional)* — `cd cloud/api && npm install && npx wrangler d1 create openapiary` then fill in `wrangler.toml` and `npx wrangler deploy`.
+2. **App** — `cd app && npm install && npm run dev` for local dev, or `npm run build` to produce a release build.
+3. **Cloud** *(optional for local-only use)* — `cd cloud/api && npm install`, run D1 migrations, then deploy via Wrangler.
 
 ## Status
 
-Phase 1 scaffold. Not yet flashed to hardware. See [`docs/migration-plan.md` §8](docs/migration-plan.md) for the first-light checklist.
+- Firmware: adaptive wake interval + pairing-window GATT config (rename/time) implemented.
+- App: BLE scanning, local SQLite buffering, sync, long-range charts, and device rename flow implemented.
+- Cloud: staging + production worker/D1 deployed; admin dashboard present.
+- Remaining validation is mostly hardware bring-up + first-light checks.
+
+See [`docs/todo-plan.md` §8](docs/todo-plan.md#8-first-light-checklist-run-in-order-once-hardware-arrives) for the runbook checklist.
 
 ## Licence
 

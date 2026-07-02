@@ -139,14 +139,14 @@ Wall-clock time has to be **seeded** once after every full power loss. Options
 
 ### Firmware TODO
 
-- ⬜ Replace `WAKE_INTERVAL_MS` constant with `nextWakeIntervalMs()` helper that
+- ✅ Replace `WAKE_INTERVAL_MS` constant with `nextWakeIntervalMs()` helper that
   returns 60 000 or 300 000 based on local hour.
-- ⬜ Add small connectable GATT service exposed only during a short "pairing
+- ✅ Add small connectable GATT service exposed only during a short "pairing
   window" (first 60 s after boot, or after a magnet swipe in v1.1):
   - `0x2A2B` Current Time (writable)
   - `0x2BB1` Display Name (custom, writable, max 16 chars; see §3b)
   - On disconnect, drop back to advert-only.
-- ⬜ Persist `displayName`, `seedEpoch`, `seedTick`, `tzOffsetMinutes` in
+- ✅ Persist `displayName`, `seedEpoch`, `seedTick`, `tzOffsetMinutes` in
   `/cal.txt` (extend the existing OAPersist struct).
 
 ---
@@ -177,8 +177,8 @@ back-garden one or the apiary one?").
 
 **App TODO** (added to §5):
 
-- ⬜ "Rename" button on `HiveDetailPage` → BLE connect → write name characteristic → disconnect → update SQLite row.
-- ⬜ Show both the friendly name AND the `OA-XXXX` underneath, so users can still match by MAC if needed.
+- ✅ "Rename" button on `HiveDetailPage` → BLE connect → write name characteristic → disconnect → update SQLite row.
+- 🟡 Show both the friendly name AND the `OA-XXXX` underneath, so users can still match by MAC if needed. (friendly name shown; underlying ID exposure still needs a dedicated UI line)
 
 ---
 
@@ -294,11 +294,11 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 - ✅ **Manual "Sync now"** button on Settings showing pending count
 - ✅ iOS platform scaffolded (Capacitor 8 uses Swift Package Manager — works on Windows; no Mac needed for scaffold, only for local build)
 - ⬜ Copy v4 Tailwind tokens + hex motif into `app/tailwind.config.js`
-- ⬜ Port `hive-visual.js` → `<HiveVisual />` React component
-- ⬜ Background BLE store-and-forward (current pages scan only while open)
-- ⬜ Long-range charts (7d / 30d) — `react-chartjs-2`
-- ⬜ **Rename hive on device** — `HiveDetailPage` action that BLE-connects to the scale during the pairing window and writes a new local name characteristic (see §3b). Display friendly name + `OA-XXXX` underneath.
-- ⬜ **Push current time** to the scale automatically on every pairing-window connect, so day/night scheduling (§3a) works without a manual cal-mode `time` command.
+- 🟡 Port `hive-visual.js` → `<HiveVisual />` React component (component exists; full integration/polish pending)
+- ✅ Background BLE store-and-forward (Android foreground-service path is implemented; iOS background strategy remains Phase 2)
+- ✅ Long-range charts (7d / 30d) — `react-chartjs-2`
+- 🟡 **Rename hive on device** — `HiveDetailPage` action BLE-connects during pairing window and writes name characteristic (implemented). Friendly name + `OA-XXXX` dual-label display still pending.
+- ✅ **Push current time** to the scale automatically on pairing-window connect, so day/night scheduling (§3a) works without a manual cal-mode `time` command.
 - ⏭️ Background scanning, iOS push notifications — Phase 2
 
 ### 5.x Distribution plan
@@ -314,7 +314,7 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 - ✅ `docs/hardware-build.md` exists (needs photos after build)
 - ✅ `docs/home-assistant.md` exists
 - ✅ `docs/todo-plan.md` (this file) — single source of truth
-- ⬜ Remove old `docs/migration-plan.md` and root-level `OpenApiary-migration-plan.md`
+- ✅ Remove old `docs/migration-plan.md` and root-level `OpenApiary-migration-plan.md`
 
 ---
 
@@ -329,7 +329,7 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 ## 8. First-Light Checklist (run in order once hardware arrives)
 
 1. ⬜ `pio run -t upload` succeeds with XIAO in DFU mode (double-tap reset)
-2. ⬜ nRF Connect on phone sees `OA-XXXX` advertising ~every 15 min with service-data UUID `0xFCD2`
+2. ⬜ nRF Connect on phone sees `OA-XXXX` (or custom name) advertising with service-data UUID `0xFCD2` at the adaptive cadence (1 min day / 5 min night once time is seeded)
 3. ⬜ nRF Connect (or Home Assistant) decodes weight + battery from BTHome service data
 4. ⬜ Home Assistant auto-discovers the device under Settings → Devices
 5. ⬜ Cal CLI works over USB: `tare`, `cal 5` (5 kg known weight), `show`
@@ -362,6 +362,6 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 - Repo: `https://github.com/greadingsuk/openapiary` (public, PolyForm NC)
 - Verified working (2026-06-08): real battery + die-temp + HX711 reads under SoftDevice, BTHome advert decodes correctly in nRF Connect as `OA-ABCB`.
 - Next actions:
-  1. Implement adaptive wake interval (§3a) and the GATT pairing window for time + name (§3a, §3b)
-  2. Add `Rename hive` flow in the app (§5)
-  3. Power-gate HX711 via P-MOSFET (§3c) before doing the PPK II measurement
+  1. Implement HX711 hard power-gating + night sample reduction (§3c), then re-run PPK II validation
+  2. Finish dual-label hive identity UI (friendly name + `OA-XXXX`) in detail/list surfaces (§3b, §5)
+  3. Complete first-light checklist end-to-end on real hardware (§8)
