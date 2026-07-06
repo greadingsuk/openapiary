@@ -53,6 +53,9 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx cap sync android
+      - name: Ensure Gradle wrapper is executable
+        working-directory: app/android
+        run: chmod +x ./gradlew
       - name: Build debug APK
         working-directory: app/android
         run: ./gradlew assembleDebug
@@ -84,7 +87,7 @@ jobs:
         working-directory: app/ios/App
         run: |
           xcodebuild \
-            -workspace App.xcworkspace \
+            -project App.xcodeproj \
             -scheme App \
             -configuration Debug \
             -sdk iphonesimulator \
