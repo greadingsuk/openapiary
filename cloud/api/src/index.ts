@@ -561,13 +561,30 @@ app.get("/v1/hives/:id/readings", async (c) => {
 app.delete("/v1/hives/:id/readings", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
+    const tsRaw = (c.req.query("ts") ?? "").trim();
 
     const owner = await c.env.DB.prepare(`SELECT user_id FROM hives WHERE id = ?`)
         .bind(id)
         .first<{ user_id: string | null }>();
     if (!owner || owner.user_id !== user.id) return c.json({ error: "not found" }, 404);
 
-    const result = await c.env.DB.prepare(`DELETE FROM readings WHERE hive_id = ?`).bind(id).run();
+    const ts = tsRaw
+        ? tsRaw
+              .split(",")
+              .map((v) => Number(v))
+              .filter((v) => Number.isFinite(v) && v > 0)
+        : [];
+
+    let result: D1Result<Record<string, unknown>>;
+    if (ts.length) {
+        const placeholders = ts.map(() => "?").join(",");
+        result = await c.env.DB
+            .prepare(`DELETE FROM readings WHERE hive_id = ? AND ts IN (${placeholders})`)
+            .bind(id, ...ts)
+            .run();
+    } else {
+        result = await c.env.DB.prepare(`DELETE FROM readings WHERE hive_id = ?`).bind(id).run();
+    }
     return c.json({ ok: true, deleted: result.meta.changes ?? 0 });
 });
 

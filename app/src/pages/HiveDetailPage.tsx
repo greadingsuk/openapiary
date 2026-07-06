@@ -7,7 +7,11 @@ import {
 import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getReadings, deleteAllReadings as deleteAllReadingsCloud } from '../lib/api';
+import {
+  getReadings,
+  deleteAllReadings as deleteAllReadingsCloud,
+  deleteReadingsByTimestamp,
+} from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
   listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings, deleteAllReadings,
@@ -121,11 +125,30 @@ const HiveDetailPage: React.FC = () => {
   }
 
   async function deleteSelected() {
-    await deleteReadings(id, [...selected]);
+    const timestamps = [...selected];
+    const s = await loadSettings();
+    let deletedCloud = false;
+    if (online && s.apiKey) {
+      try {
+        await deleteReadingsByTimestamp(s, id, timestamps);
+        deletedCloud = true;
+      } catch {
+        deletedCloud = false;
+      }
+    }
+
+    await deleteReadings(id, timestamps);
     setSelected(new Set());
     setSelectMode(false);
     await load();
-    setToast('Readings deleted');
+
+    if (deletedCloud) {
+      setToast('Readings deleted from device and cloud.');
+    } else if (online && s.apiKey) {
+      setToast('Cleared locally, but cloud delete failed. Some readings may reappear.');
+    } else {
+      setToast('Cleared locally while offline. Cloud history was not deleted.');
+    }
   }
 
   async function deleteAllForHive() {

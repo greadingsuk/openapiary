@@ -128,6 +128,24 @@ export async function deleteAllReadings(s: Settings, hiveId: string): Promise<nu
   return Number((j as { deleted?: number }).deleted ?? 0);
 }
 
+/** Delete specific cloud readings for a hive by timestamp (owner-only). */
+export async function deleteReadingsByTimestamp(
+  s: Settings,
+  hiveId: string,
+  timestamps: number[],
+): Promise<number> {
+  const clean = [...new Set(timestamps)].filter((n) => Number.isFinite(n) && n > 0);
+  if (!clean.length) return 0;
+  const tsParam = encodeURIComponent(clean.join(','));
+  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}/readings?ts=${tsParam}`, {
+    method: 'DELETE',
+    headers: headers(s),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `DELETE readings ${r.status}`);
+  return Number((j as { deleted?: number }).deleted ?? 0);
+}
+
 /** Update a hive's mutable fields (currently the friendly name). */
 export async function patchHive(
   s: Settings,
