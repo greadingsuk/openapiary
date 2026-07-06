@@ -20,10 +20,12 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
-import { findDeviceId, tareDevice, readDeviceDiagnostics } from '../lib/ble';
+import { findDeviceId, readDeviceDiagnostics } from '../lib/ble';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
+import NewApiaryModal from '../components/NewApiaryModal';
+import TareWizard from '../components/TareWizard';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
 type Range = '24h' | '7d' | '30d' | 'custom';
@@ -56,6 +58,7 @@ const HiveDetailPage: React.FC = () => {
   const [showMenu, setShowMenu] = useState(false);
   const [showMove, setShowMove] = useState(false);
   const [showNewApiary, setShowNewApiary] = useState(false);
+  const [showTare, setShowTare] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
@@ -179,24 +182,6 @@ const HiveDetailPage: React.FC = () => {
     }
   }
 
-  async function runTare() {
-    const deviceName = id.toUpperCase();
-    setBusyAction('Taring scale');
-    try {
-      const deviceId = await findDeviceId(deviceName, 8000);
-      if (!deviceId) {
-        setToast('Scale not found. Reboot it, then try tare within the 60-second pairing window.');
-        return;
-      }
-      await tareDevice(deviceId);
-      setToast('Tare complete. The current load is now treated as zero.');
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function runAccuracyCheck() {
     const deviceName = id.toUpperCase();
     setBusyAction('Checking stand accuracy');
@@ -263,6 +248,12 @@ const HiveDetailPage: React.FC = () => {
       for (const t of g.tsList) { if (allSel) n.delete(t); else n.add(t); }
       return n;
     });
+  }
+
+  const allWindowedTs = windowed.map((r) => r.ts);
+  const allSelected = allWindowedTs.length > 0 && allWindowedTs.every((t) => selected.has(t));
+  function toggleSelectAll() {
+    setSelected(() => (allSelected ? new Set() : new Set(allWindowedTs)));
   }
 
   return (
@@ -364,6 +355,12 @@ const HiveDetailPage: React.FC = () => {
                       onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
                       {selectMode ? 'Cancel' : 'Select'}
                     </button>
+                    {selectMode && (
+                      <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
+                        onClick={toggleSelectAll}>
+                        {allSelected ? 'Clear all' : 'Select all'}
+                      </button>
+                    )}
                     <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
                       {collapse ? 'Show all' : 'Group repeats'}
                     </button>
@@ -409,7 +406,7 @@ const HiveDetailPage: React.FC = () => {
           buttons={[
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
-            { text: busyAction ? 'Tare stand (busy)' : 'Tare stand', icon: checkmarkCircle, handler: () => { void runTare(); } },
+            { text: 'Tare stand', icon: checkmarkCircle, handler: () => setShowTare(true) },
             { text: busyAction ? 'Stand accuracy check (busy)' : 'Stand accuracy check', icon: warningOutline, handler: () => { void runAccuracyCheck(); } },
             { text: 'Delete all readings', role: 'destructive', handler: () => setConfirmDeleteAll(true) },
             {
@@ -431,13 +428,16 @@ const HiveDetailPage: React.FC = () => {
           buttons={[...knownApiaries.map((n) => ({ text: n, handler: () => moveTo(n) })),
             { text: '+ New apiary\u2026', handler: () => setShowNewApiary(true) },
             { text: 'Cancel', role: 'cancel' as const }]} />
-        <IonAlert isOpen={showNewApiary} onDidDismiss={() => setShowNewApiary(false)} header="New apiary"
-          message="Name your apiary and where it lives. The location powers the regional map in the admin console."
-          inputs={[
-            { name: 'apName', type: 'text', placeholder: 'Apiary name (e.g. Back Garden)' },
-            { name: 'location', type: 'text', placeholder: 'Postcode or place (e.g. CH7 4EL)' },
-          ]}
-          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Create', handler: (d) => { void createApiary(d.apName, d.location); } }]} />
+        <NewApiaryModal
+          isOpen={showNewApiary}
+          onClose={() => setShowNewApiary(false)}
+          onCreate={(nm, loc) => { void createApiary(nm, loc); }}
+        />
+        <TareWizard
+          isOpen={showTare}
+          deviceName={id.toUpperCase()}
+          onClose={() => { setShowTare(false); void load(); }}
+        />
         <IonAlert isOpen={showRename} onDidDismiss={() => setShowRename(false)} header="Rename hive"
           message="Up to 16 characters. Updates here, in the cloud, and on the scale if in range."
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}

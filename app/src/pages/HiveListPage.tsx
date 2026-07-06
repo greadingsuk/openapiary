@@ -2,7 +2,7 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet, IonAlert, IonToast,
+  IonActionSheet, IonToast,
 } from '@ionic/react';
 import {
   add, settingsOutline, cloudOfflineOutline, batteryHalfOutline,
@@ -16,6 +16,7 @@ import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { loadApiaries, apiaryOf, apiaryNames, upsertApiary, setHiveApiary, type ApiaryStore } from '../lib/apiaries';
 import { syncNearbyKnownHives } from '../lib/nearbySync';
+import NewApiaryModal from '../components/NewApiaryModal';
 import { StatusDot, EmptyState, ErrorState, ListSkeleton } from '../components/ui';
 
 type Sort = 'name' | 'weight' | 'recent';
@@ -253,24 +254,10 @@ const HiveListPage: React.FC = () => {
           ]}
         />
 
-        <IonAlert
+        <NewApiaryModal
           isOpen={showNewApiary}
-          onDidDismiss={() => setShowNewApiary(false)}
-          header="New apiary"
-          message="Name your apiary and where it lives."
-          inputs={[
-            { name: 'apName', type: 'text', placeholder: 'Apiary name (e.g. Back Garden)' },
-            { name: 'location', type: 'text', placeholder: 'Postcode or place (e.g. CH7 4EL)' },
-          ]}
-          buttons={[
-            { text: 'Cancel', role: 'cancel' },
-            {
-              text: 'Create',
-              handler: (d) => {
-                void createApiary(d.apName, d.location);
-              },
-            },
-          ]}
+          onClose={() => setShowNewApiary(false)}
+          onCreate={(nm, loc) => { void createApiary(nm, loc); }}
         />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
       </IonContent>
