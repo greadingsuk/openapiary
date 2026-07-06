@@ -1,7 +1,8 @@
 # OpenApiary Fleet Dashboard
 
-Single-file admin dashboard. Open `index.html` in any browser, paste your
-`STAGING_ADMIN_KEY` (from `cloud/api/.secrets.local`), click Load.
+Single-file admin dashboard. It is live at **https://openapiary.co.uk** (Cloudflare
+Pages project `oa-fleet`). You can also open `index.html` locally in any browser.
+Paste your production `ADMIN_KEY`, click Load.
 
 Calls these endpoints (all gated by `X-Admin-Key`):
 
@@ -13,12 +14,12 @@ Calls these endpoints (all gated by `X-Admin-Key`):
 
 ```bash
 cd cloud/dashboard
-npx wrangler pages deploy . --project-name oa-fleet
+npx wrangler pages deploy . --project-name oa-fleet --branch main
 ```
 
-Bind a custom domain like `fleet.openapiary.dev` from the Cloudflare Pages dashboard
-when you have the domain configured. Until then the `*.pages.dev` preview URL is fine.
+The project is bound to the apex domain `openapiary.co.uk`. The `*.pages.dev`
+preview URL also works for quick checks.
 
 The admin key never leaves the browser - it's stored in `localStorage` and sent only
 in the `X-Admin-Key` header to your Worker. Lose your laptop = rotate the key with
-`npx wrangler secret put ADMIN_KEY --env staging`.
+`npx wrangler secret put ADMIN_KEY --env production`.

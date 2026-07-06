@@ -248,6 +248,15 @@ LiPo of usable energy at 3V regulated). The techniques are:
 
 ## 4. Cloud (`cloud/api/`) — **deployed to staging + production (2026-06-01)**
 
+> **Update 2026-07-06 — consolidated to production-only on `openapiary.co.uk`.**
+> Staging (`oa-api-staging`) has been retired from `wrangler.toml`; everything
+> ships live to `oa-api-prod`. The API is served at **`https://api.openapiary.co.uk`**
+> (legacy `api.openapiaryproject.com` kept as a temporary fallback), and the admin
+> dashboard at **`https://openapiary.co.uk`** (Pages project `oa-fleet`). The app
+> pins its API URL to the new domain and cloud sync is on by default. New
+> endpoint added: `DELETE /v1/hives/:id/readings` (idempotent; supports `?ts=` for
+> selective deletes or all readings when omitted).
+
 Lives in the same Cloudflare account as Smart Hive Scale; isolation is by
 resource naming (`oa-` prefix) + per-env secrets. See [cloud/api/README.md](../cloud/api/README.md).
 

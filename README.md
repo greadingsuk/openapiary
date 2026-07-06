@@ -30,10 +30,16 @@ Short version:
 
 ## Status
 
-- Firmware: adaptive wake interval + pairing-window GATT config (rename/time) implemented.
-- App: BLE scanning, local SQLite buffering, sync, long-range charts, and device rename flow implemented.
-- Cloud: staging + production worker/D1 deployed; admin dashboard present.
-- Remaining validation is mostly hardware bring-up + first-light checks.
+- Firmware: adaptive wake interval + pairing-window GATT config (rename / time / tare / diagnostics) implemented.
+- App: BLE scanning, local SQLite buffering, cloud sync (on by default), long-range charts, device rename, apiary management, on-site **guided tare wizard**, stand accuracy check, and **delete readings** (single, multi-select "Select all", or delete-all) implemented.
+- Cloud: **production only** — Worker `oa-api-prod` + D1 `oa-prod`, admin dashboard live. No staging/dev environment for now; everything ships live until stable.
+
+### Live URLs
+
+| Surface | URL |
+|---|---|
+| API | `https://api.openapiary.co.uk` (legacy fallback: `api.openapiaryproject.com`) |
+| Admin dashboard | `https://openapiary.co.uk` |
 
 See [`docs/todo-plan.md` §8](docs/todo-plan.md#8-first-light-checklist-run-in-order-once-hardware-arrives) for the runbook checklist.
 
