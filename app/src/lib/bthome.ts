@@ -12,6 +12,7 @@ export interface BTHomeReading {
   tempC?: number;
   charging?: boolean;    // 0x10 power binary (USB / solar present)
   bootCount?: number;    // 0x3D count uint16
+  fwVersion?: string;    // 0xF2 firmware version uint24 -> "vMAJOR.MINOR.PATCH"
 }
 
 // Parse a BTHome v2 service-data payload (without the 16-bit UUID prefix).
@@ -64,6 +65,11 @@ export function parseBTHome(payload: Uint8Array): BTHomeReading | null {
         if (i + 2 > payload.length) return r;
         r.bootCount = dv.getUint16(i, true);
         i += 2;
+        break;
+      case 0xf2: // firmware version, uint24 LE, bytes = [patch, minor, major]
+        if (i + 3 > payload.length) return r;
+        r.fwVersion = `v${payload[i + 2]}.${payload[i + 1]}.${payload[i]}`;
+        i += 3;
         break;
       default:
         // Unknown object id - we can't safely skip without length tables. Bail.
