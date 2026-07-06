@@ -11,22 +11,72 @@ cd "$REPO_ROOT"
 
 step() { printf "\n\033[1;33m▸ %s\033[0m\n" "$1"; }
 
+START_EPOCH="$(date +%s)"
+CURRENT_STEP="init"
+
+on_exit() {
+  local exit_code=$?
+  trap - EXIT
+
+  local end_epoch duration status run_ts host user_name branch head
+  end_epoch="$(date +%s)"
+  duration="$((end_epoch - START_EPOCH))"
+  status="success"
+  if [[ "$exit_code" -ne 0 ]]; then status="failed"; fi
+
+  run_ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  host="$(hostname 2>/dev/null || echo unknown-host)"
+  user_name="${USER:-$(whoami 2>/dev/null || echo unknown-user)}"
+  branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown-branch)"
+  head="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown-head)"
+
+  local log_dir="$REPO_ROOT/logs"
+  local log_file="$log_dir/ios-build-runs.tsv"
+  mkdir -p "$log_dir"
+  if [[ ! -f "$log_file" ]]; then
+    printf "timestamp_utc\tstatus\tduration_s\tstep\tbranch\thead\thost\tuser\n" > "$log_file"
+  fi
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$run_ts" "$status" "$duration" "$CURRENT_STEP" "$branch" "$head" "$host" "$user_name" >> "$log_file"
+
+  # Loop-closing telemetry: by default, push the log row to origin/main.
+  # Disable with OA_LOG_TO_GIT=0 if needed.
+  if [[ "${OA_LOG_TO_GIT:-1}" == "1" ]]; then
+    if git -C "$REPO_ROOT" add "$log_file" 2>/dev/null && \
+      ! git -C "$REPO_ROOT" diff --cached --quiet -- "$log_file"; then
+      local msg="chore(log): ios run ${status} ${run_ts}"
+      if git -C "$REPO_ROOT" commit -m "$msg" "$log_file" >/dev/null 2>&1; then
+        git -C "$REPO_ROOT" push origin main >/dev/null 2>&1 || \
+          echo "⚠️  Build log commit created but push failed (check git auth/network)."
+      fi
+    fi
+  fi
+
+  exit "$exit_code"
+}
+trap on_exit EXIT
+
 if [[ "${1:-}" != "--no-pull" ]]; then
+  CURRENT_STEP="git pull"
   step "Pulling latest from GitHub"
   git pull origin main
 fi
 
 cd app
 
+CURRENT_STEP="npm install"
 step "Installing dependencies (npm install)"
 npm install
 
+CURRENT_STEP="npm run build"
 step "Building web bundle (npm run build)"
 npm run build
 
+CURRENT_STEP="npm run icons"
 step "Generating app icon + splash (npm run icons)"
 npm run icons || echo "  (icons step skipped — non-fatal)"
 
+CURRENT_STEP="npx cap sync ios"
 step "Syncing into the iOS project (npx cap sync ios)"
 npx cap sync ios
 
@@ -34,10 +84,12 @@ npx cap sync ios
 # migration sometimes strips them, which silently kills the BLE prompt. If the
 # file got modified, revert ONLY it (keeps signing/bundle-id edits intact).
 if git -C "$REPO_ROOT" status --porcelain app/ios/App/App/Info.plist | grep -q '^ M'; then
+  CURRENT_STEP="restore Info.plist"
   step "Restoring Bluetooth keys in Info.plist (git checkout)"
   git -C "$REPO_ROOT" checkout -- app/ios/App/App/Info.plist
 fi
 
+CURRENT_STEP="open Xcode"
 step "Opening the project in Xcode"
 open ios/App/App.xcodeproj
 
