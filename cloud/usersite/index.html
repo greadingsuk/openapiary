@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Open Apiary</title>
+<meta name="description" content="Open Apiary — see your hive weight, temperature and battery over time." />
+<meta name="theme-color" content="#000000" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%90%9D%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #fbf8f2; --fg: #120805; --accent: #f2800f; --accent-2: #b05908;
+    --muted: #6e6655; --card: #ffffff; --border: rgba(18,8,5,0.08);
+    --on-accent: #ffffff; --bar: #000000; --on-bar: #f3ece0;
+    --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Inter", -apple-system, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--font-body); background: var(--bg); color: var(--fg); min-height: 100vh; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: var(--bar); }
+  header h1 { margin: 0; font-family: var(--font-display); font-size: 18px; color: var(--on-bar); font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; }
+  header .who { display: flex; align-items: center; gap: 10px; }
+  input, button, select { background: #fff; color: var(--fg); border: 1px solid var(--border); padding: 9px 12px; border-radius: 8px; font-size: 13px; }
+  button { cursor: pointer; background: var(--accent); color: var(--on-accent); border: none; font-weight: 700; }
+  button:hover { background: var(--accent-2); }
+  button.ghost { background: rgba(243,236,224,0.12); color: var(--on-bar); border: 1px solid rgba(243,236,224,0.25); font-weight: 600; }
+  .who label { color: var(--muted); font-size: 12px; }
+  .who select { min-width: 180px; font-weight: 600; }
+  main { padding: 24px; display: grid; gap: 24px; max-width: 1200px; margin: 0 auto; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: 0 1px 3px rgba(18,8,5,0.06); }
+  .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
+  .stat .value { font-family: var(--font-display); color: var(--accent); font-size: 30px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(18,8,5,0.06); }
+  .card h2 { margin: 0 0 6px 0; font-family: var(--font-display); font-size: 14px; text-transform: uppercase; letter-spacing: 1px; font-weight: 800; }
+  .card .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  canvas { max-height: 300px; }
+  .error { background: #fde8e8; color: #8a1f23; padding: 12px 16px; border-radius: 8px; border: 1px solid #f0c0c0; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  /* Auth gate */
+  .gate { min-height: 70vh; display: grid; place-items: center; padding: 24px; }
+  .gate .box { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 28px; width: 100%; max-width: 380px; box-shadow: 0 6px 24px rgba(18,8,5,0.08); }
+  .gate h2 { font-family: var(--font-display); margin: 0 0 4px; }
+  .gate p { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .gate label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .gate input { width: 100%; }
+  .gate button { width: 100%; margin-top: 18px; padding: 11px; }
+  .range { display: inline-flex; gap: 6px; }
+  .range button { background: #fff; color: var(--muted); border: 1px solid var(--border); font-weight: 600; padding: 6px 12px; }
+  .range button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .corr { display: flex; align-items: baseline; gap: 10px; }
+  .corr .r { font-family: var(--font-display); font-size: 26px; font-weight: 800; color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐝 Open Apiary</h1>
+  <div class="who" id="who" style="display:none">
+    <label for="hive">Hive</label>
+    <select id="hive"></select>
+    <div class="range" id="range">
+      <button data-days="1">24h</button>
+      <button data-days="7" class="active">7d</button>
+      <button data-days="30">30d</button>
+    </div>
+    <button class="ghost" id="signOut">Sign out</button>
+  </div>
+</header>
+
+<!-- Auth gate -->
+<div class="gate" id="gate">
+  <div class="box">
+    <h2>Your hives</h2>
+    <p>Sign in with your Open Apiary account — the same email &amp; password you use in the app.</p>
+    <div id="gateError"></div>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    <button id="signIn">Sign in</button>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<main id="app" style="display:none">
+  <div id="error"></div>
+  <section class="stats" id="stats"></section>
+  <section class="grid-2">
+    <div class="card"><h2>Weight</h2><p class="sub" id="weightSub">kg over time</p><canvas id="weightChart"></canvas></div>
+    <div class="card"><h2>Temperature &amp; battery</h2><p class="sub">°C and volts over time</p><canvas id="envChart"></canvas></div>
+  </section>
+  <section class="card">
+    <h2>Weight × temperature correlation</h2>
+    <p class="sub">Each point is one reading. <span class="corr">Pearson r = <span class="r" id="pearson">–</span></span></p>
+    <canvas id="corrChart"></canvas>
+  </section>
+</main>
+
+<script>
+const API = 'https://api.openapiary.co.uk';
+const LS_KEY = 'oa.web.key';
+const $ = (id) => document.getElementById(id);
+let charts = {};
+let days = 7;
+
+function keyGet() { return localStorage.getItem(LS_KEY) || ''; }
+function keySet(k) { localStorage.setItem(LS_KEY, k); }
+function keyClear() { localStorage.removeItem(LS_KEY); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'X-API-Key': keyGet(), 'Content-Type': 'application/json', ...(opts.headers||{}) } });
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).error || `${path} ${r.status}`);
+  return r.json();
+}
+
+// epoch seconds or ms -> ms
+const toMs = (t) => (t < 1e12 ? t * 1000 : t);
+
+async function signIn() {
+  $('gateError').innerHTML = '';
+  const email = $('email').value.trim().toLowerCase();
+  const password = $('password').value;
+  if (!email || !password) { $('gateError').innerHTML = '<div class="error">Enter your email and password.</div>'; return; }
+  try {
+    const r = await fetch(API + '/v1/account/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, device: 'web' }),
+    });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(j.error || `Sign in failed (${r.status})`);
+    keySet(j.api_key);
+    await boot();
+  } catch (e) { $('gateError').innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+function signOut() { keyClear(); location.reload(); }
+
+async function boot() {
+  if (!keyGet()) { $('gate').style.display = 'grid'; $('app').style.display = 'none'; $('who').style.display = 'none'; return; }
+  try {
+    const { hives } = await api('/v1/hives').then(j => ({ hives: j.hives ?? j })).catch(() => ({ hives: [] }));
+    if (!hives || hives.length === 0) {
+      $('gate').style.display = 'none'; $('who').style.display = 'none';
+      $('app').style.display = 'grid';
+      $('app').innerHTML = '<div class="empty">No hives on your account yet. Add a scale in the app, then refresh.</div>';
+      return;
+    }
+    $('gate').style.display = 'none'; $('app').style.display = 'grid'; $('who').style.display = 'flex';
+    const sel = $('hive'); sel.innerHTML = '';
+    hives.forEach(h => { const o = document.createElement('option'); o.value = h.id; o.textContent = h.name || h.id; sel.appendChild(o); });
+    await loadHive(sel.value);
+  } catch (e) {
+    if (String(e.message).includes('401') || /unauthorized/i.test(e.message)) { keyClear(); return boot(); }
+    $('error').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadHive(hiveId) {
+  $('error').innerHTML = '';
+  const j = await api(`/v1/hives/${encodeURIComponent(hiveId)}/readings`).catch(() => ({ readings: [] }));
+  let rows = (j.readings ?? []).map(r => ({ ts: toMs(r.ts), w: r.weight_kg, v: r.battery_v, t: r.temp_c }));
+  const cutoff = Date.now() - days * 86400000;
+  rows = rows.filter(r => r.ts >= cutoff).sort((a,b) => a.ts - b.ts);
+  renderStats(rows);
+  renderWeight(rows);
+  renderEnv(rows);
+  renderCorr(rows);
+}
+
+function renderStats(rows) {
+  const last = rows[rows.length - 1] || {};
+  const first = rows.find(r => r.w != null);
+  const deltaW = (last.w != null && first && first.w != null) ? (last.w - first.w) : null;
+  const cards = [
+    ['Latest weight', last.w != null ? last.w.toFixed(2) + ' kg' : '–'],
+    ['Change over range', deltaW != null ? (deltaW >= 0 ? '+' : '') + deltaW.toFixed(2) + ' kg' : '–'],
+    ['Temperature', last.t != null ? last.t.toFixed(1) + ' °C' : '–'],
+    ['Battery', last.v != null ? last.v.toFixed(2) + ' V' : '–'],
+    ['Readings', String(rows.length)],
+  ];
+  $('stats').innerHTML = cards.map(([l,v]) => `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+}
+
+function mkChart(id, cfg) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart($(id), cfg); }
+const timeX = { type: 'time', time: { unit: days <= 1 ? 'hour' : 'day' }, grid: { display: false } };
+
+function renderWeight(rows) {
+  mkChart('weightChart', {
+    type: 'line',
+    data: { datasets: [{ label: 'Weight (kg)', data: rows.filter(r=>r.w!=null).map(r=>({x:r.ts,y:r.w})), borderColor: '#f2800f', backgroundColor: 'rgba(242,128,15,0.12)', fill: true, tension: 0.25, pointRadius: 0, borderWidth: 2 }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: timeX, y: { beginAtZero: false } } },
+  });
+}
+
+function renderEnv(rows) {
+  mkChart('envChart', {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Temp (°C)', yAxisID: 'y', data: rows.filter(r=>r.t!=null).map(r=>({x:r.ts,y:r.t})), borderColor: '#b05908', pointRadius: 0, borderWidth: 2, tension: 0.25 },
+      { label: 'Battery (V)', yAxisID: 'y1', data: rows.filter(r=>r.v!=null).map(r=>({x:r.ts,y:r.v})), borderColor: '#6e6655', borderDash: [4,4], pointRadius: 0, borderWidth: 2, tension: 0.25 },
+    ]},
+    options: { responsive: true, interaction: { mode: 'index', intersect: false },
+      scales: { x: timeX, y: { position: 'left', title: { display: true, text: '°C' } }, y1: { position: 'right', title: { display: true, text: 'V' }, grid: { display: false } } } },
+  });
+}
+
+function pearson(pts) {
+  const n = pts.length; if (n < 3) return null;
+  let sx=0, sy=0, sxy=0, sxx=0, syy=0;
+  for (const p of pts) { sx+=p.x; sy+=p.y; sxy+=p.x*p.y; sxx+=p.x*p.x; syy+=p.y*p.y; }
+  const num = n*sxy - sx*sy;
+  const den = Math.sqrt((n*sxx - sx*sx) * (n*syy - sy*sy));
+  return den === 0 ? null : num/den;
+}
+
+function renderCorr(rows) {
+  const pts = rows.filter(r => r.t != null && r.w != null).map(r => ({ x: r.t, y: r.w }));
+  const r = pearson(pts);
+  $('pearson').textContent = r == null ? '–' : r.toFixed(2);
+  mkChart('corrChart', {
+    type: 'scatter',
+    data: { datasets: [{ label: 'weight vs temp', data: pts, backgroundColor: 'rgba(242,128,15,0.55)', pointRadius: 3 }] },
+    options: { responsive: true, plugins: { legend: { display: false } },
+      scales: { x: { title: { display: true, text: 'Temperature (°C)' } }, y: { title: { display: true, text: 'Weight (kg)' } } } },
+  });
+}
+
+// Wire up
+$('signIn').addEventListener('click', signIn);
+$('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') signIn(); });
+$('signOut').addEventListener('click', signOut);
+$('hive').addEventListener('change', (e) => loadHive(e.target.value));
+$('range').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-days]'); if (!b) return;
+  days = Number(b.dataset.days);
+  [...$('range').children].forEach(c => c.classList.toggle('active', c === b));
+  timeX.time.unit = days <= 1 ? 'hour' : 'day';
+  loadHive($('hive').value);
+});
+
+boot();
+</script>
+</body>
+</html>

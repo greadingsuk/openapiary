@@ -10,6 +10,10 @@ name = "oa-api"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 
+# Pinned so deploys don't rely on the token having account-list permission
+# (account IDs are not secret — they appear in dashboard URLs).
+account_id = "8e7dac970ca4f95a26333c1b17fb290e"
+
 # Don't publish a *.workers.dev preview URL by default — we'll bind a custom
 # route or hostname instead. Set true temporarily during local debugging only.
 workers_dev = false
@@ -23,31 +27,36 @@ mode = "smart"
 enabled = true
 
 # ---------------------------------------------------------------------------
-# Staging — the default `wrangler deploy` target while iterating.
-# Bind to:  oa-api-staging.<your-subdomain>.workers.dev (only if you set
-# workers_dev=true on this env) OR a custom route like api-staging.openapiary.dev
-# ---------------------------------------------------------------------------
-[env.staging]
-name = "oa-api-staging"
-workers_dev = true
-
-[[env.staging.d1_databases]]
-binding = "DB"
-database_name = "oa-staging"
-database_id   = "f714bc51-dc22-4a76-9128-a81ba86acdd5"
-
-# Secrets (set with `npx wrangler secret put <NAME> --env staging`):
-#   API_KEY       - shared key sent in X-API-Key header by the app
-#   API_KEY_SALT  - HMAC salt for header comparison (Phase 1 single-tenant)
-
-# ---------------------------------------------------------------------------
-# Production — promoted to with `wrangler deploy --env production`.
+# Production is the ONLY environment for now. Everything ships live here until
+# the project is stable enough to warrant separate dev/staging targets again.
+# Deploy with:  npx wrangler deploy --env production
 # ---------------------------------------------------------------------------
 [env.production]
 name = "oa-api-prod"
 workers_dev = false
 
+# Primary API hostname on the main domain (Cloudflare provisions DNS + cert).
+[[env.production.routes]]
+pattern = "api.openapiary.co.uk"
+custom_domain = true
+
+# Legacy hostname kept as a fallback so older app builds keep working until
+# every device is updated to the new domain. Safe to remove later.
+[[env.production.routes]]
+pattern = "api.openapiaryproject.com"
+custom_domain = true
+
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "oa-prod"
 database_id   = "0b326164-7fcc-4328-860c-b5057a5a8f9c"
+
+# Firmware distribution: the app downloads firmware via the Worker, which pulls
+# the binary from this PRIVATE GitHub release repo using GITHUB_TOKEN.
+[env.production.vars]
+GITHUB_REPO = "greadingsuk/openapiary"
+# Ed25519 public key (32-byte hex) firmware packages must be signed with.
+FIRMWARE_PUBLIC_KEY = "2b08e7cae962958feb9ac3d0360774d676038edf8c8553640ce031f89c0a9888"
+
+# Secrets (set with `npx wrangler secret put <NAME> --env production`):
+#   API_KEY, API_KEY_SALT, ADMIN_KEY, GITHUB_TOKEN

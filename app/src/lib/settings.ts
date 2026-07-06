@@ -12,7 +12,7 @@ export interface Settings {
 const KEY = 'openapiary.settings.v1';
 
 const DEFAULTS: Settings = {
-  apiUrl: 'https://api.openapiaryproject.com',
+  apiUrl: 'https://api.openapiary.co.uk',
   apiKey: '',
   syncEnabled: true,
   backgroundScan: false,
