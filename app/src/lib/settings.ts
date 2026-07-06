@@ -23,7 +23,10 @@ export async function loadSettings(): Promise<Settings> {
   const { value } = await Preferences.get({ key: KEY });
   if (!value) return { ...DEFAULTS };
   try {
-    return { ...DEFAULTS, ...JSON.parse(value) };
+    // Always pin apiUrl to the current default. Older builds persisted a
+    // staging URL, and a stale saved value would otherwise override the new
+    // default and send the app to the wrong (outdated) backend.
+    return { ...DEFAULTS, ...JSON.parse(value), apiUrl: DEFAULTS.apiUrl };
   } catch {
     return { ...DEFAULTS };
   }
