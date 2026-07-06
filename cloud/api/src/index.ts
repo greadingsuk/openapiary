@@ -566,7 +566,17 @@ app.delete("/v1/hives/:id/readings", async (c) => {
     const owner = await c.env.DB.prepare(`SELECT user_id FROM hives WHERE id = ?`)
         .bind(id)
         .first<{ user_id: string | null }>();
-    if (!owner || owner.user_id !== user.id) return c.json({ error: "not found" }, 404);
+
+    // Deleting a hive owned by ANOTHER user must be refused.
+    if (owner && owner.user_id && owner.user_id !== user.id) {
+        return c.json({ error: "hive belongs to another user" }, 403);
+    }
+    // Deleting readings the cloud never had (hive not synced, or unowned) is a
+    // successful no-op — otherwise the app reports a false "cloud failed" when
+    // there is simply nothing to delete.
+    if (!owner || owner.user_id !== user.id) {
+        return c.json({ ok: true, deleted: 0 });
+    }
 
     const ts = tsRaw
         ? tsRaw

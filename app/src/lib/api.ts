@@ -124,7 +124,7 @@ export async function deleteAllReadings(s: Settings, hiveId: string): Promise<nu
     headers: headers(s),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error ?? `DELETE readings ${r.status}`);
+  if (!r.ok) throw new Error((j as { error?: string }).error ?? `DELETE readings failed (HTTP ${r.status})`);
   return Number((j as { deleted?: number }).deleted ?? 0);
 }
 
@@ -142,7 +142,7 @@ export async function deleteReadingsByTimestamp(
     headers: headers(s),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error ?? `DELETE readings ${r.status}`);
+  if (!r.ok) throw new Error((j as { error?: string }).error ?? `DELETE readings failed (HTTP ${r.status})`);
   return Number((j as { deleted?: number }).deleted ?? 0);
 }
 
