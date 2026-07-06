@@ -13,6 +13,19 @@ step() { printf "\n\033[1;33m▸ %s\033[0m\n" "$1"; }
 
 START_EPOCH="$(date +%s)"
 CURRENT_STEP="init"
+PULL_STASH_NAME=""
+
+restore_pull_stash() {
+  if [[ -n "$PULL_STASH_NAME" ]]; then
+    git -C "$REPO_ROOT" stash list | grep -q "$PULL_STASH_NAME" || return 0
+    step "Restoring local changes after pull"
+    if ! git -C "$REPO_ROOT" stash pop --index >/dev/null 2>&1; then
+      echo "⚠️  Could not auto-apply stashed local changes."
+      echo "   Run: git stash list"
+      echo "   Then: git stash pop"
+    fi
+  fi
+}
 
 on_exit() {
   local exit_code=$?
@@ -57,9 +70,17 @@ on_exit() {
 trap on_exit EXIT
 
 if [[ "${1:-}" != "--no-pull" ]]; then
+  if ! git -C "$REPO_ROOT" diff --quiet || ! git -C "$REPO_ROOT" diff --cached --quiet; then
+    CURRENT_STEP="stash local changes"
+    step "Stashing local changes before pull"
+    PULL_STASH_NAME="ios-build-autostash-$(date +%s)"
+    git -C "$REPO_ROOT" stash push --include-untracked -m "$PULL_STASH_NAME" >/dev/null 2>&1 || true
+  fi
+
   CURRENT_STEP="git pull"
   step "Pulling latest from GitHub"
-  git pull origin main
+  git pull --rebase origin main
+  restore_pull_stash
 fi
 
 cd app
