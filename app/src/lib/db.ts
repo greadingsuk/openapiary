@@ -29,6 +29,15 @@ CREATE TABLE IF NOT EXISTS readings (
   PRIMARY KEY (hive_id, ts)
 );
 CREATE INDEX IF NOT EXISTS idx_readings_unsynced ON readings(synced) WHERE synced = 0;
+CREATE TABLE IF NOT EXISTS deleted_readings (
+  hive_id TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  PRIMARY KEY (hive_id, ts)
+);
+CREATE TABLE IF NOT EXISTS hive_clear_markers (
+  hive_id TEXT PRIMARY KEY,
+  cleared_before_ts INTEGER NOT NULL
+);
 `;
 
 let db: SQLiteDBConnection | null = null;
@@ -37,6 +46,8 @@ let initPromise: Promise<void> | null = null;
 // In-memory fallback for browser dev when jeep-sqlite Web Worker isn't present.
 const memReadings: Array<Reading & { synced: number }> = [];
 const memHives = new Map<string, Hive>();
+const memDeletedReadings = new Map<string, Set<number>>();
+const memClearMarkers = new Map<string, number>();
 let useMemory = false;
 
 export interface Hive {
@@ -53,6 +64,76 @@ export interface Reading {
   temp_c?: number;
   packet_id?: number;
   rssi?: number;
+}
+
+function isSuppressedInMemory(hiveId: string, ts: number): boolean {
+  const cutoff = memClearMarkers.get(hiveId) ?? 0;
+  if (ts <= cutoff) return true;
+  return (memDeletedReadings.get(hiveId)?.has(ts)) ?? false;
+}
+
+async function isSuppressedInDb(hiveId: string, ts: number): Promise<boolean> {
+  const clearRow = await db!.query(
+    'SELECT cleared_before_ts FROM hive_clear_markers WHERE hive_id = ? LIMIT 1',
+    [hiveId],
+  );
+  const cutoff = (clearRow.values?.[0] as { cleared_before_ts?: number } | undefined)?.cleared_before_ts ?? 0;
+  if (ts <= cutoff) return true;
+  const delRow = await db!.query(
+    'SELECT 1 AS n FROM deleted_readings WHERE hive_id = ? AND ts = ? LIMIT 1',
+    [hiveId, ts],
+  );
+  return (delRow.values?.length ?? 0) > 0;
+}
+
+async function markDeletedReadings(hiveId: string, timestamps: number[]): Promise<void> {
+  if (!timestamps.length) return;
+  if (useMemory) {
+    const cur = memDeletedReadings.get(hiveId) ?? new Set<number>();
+    for (const ts of timestamps) cur.add(ts);
+    memDeletedReadings.set(hiveId, cur);
+    return;
+  }
+  const stmts = timestamps.map((ts) =>
+    db!.run(
+      'INSERT OR IGNORE INTO deleted_readings (hive_id, ts) VALUES (?, ?)',
+      [hiveId, ts],
+    ));
+  await Promise.all(stmts);
+}
+
+async function markHiveCleared(hiveId: string, clearedBeforeTs: number): Promise<void> {
+  if (useMemory) {
+    memClearMarkers.set(hiveId, clearedBeforeTs);
+    memDeletedReadings.delete(hiveId);
+    return;
+  }
+  await db!.run(
+    `INSERT INTO hive_clear_markers (hive_id, cleared_before_ts)
+     VALUES (?, ?)
+     ON CONFLICT(hive_id) DO UPDATE SET
+       cleared_before_ts = MAX(hive_clear_markers.cleared_before_ts, excluded.cleared_before_ts)`,
+    [hiveId, clearedBeforeTs],
+  );
+  await db!.run('DELETE FROM deleted_readings WHERE hive_id = ?', [hiveId]);
+}
+
+export async function getDeletionState(hiveId: string): Promise<{ clearedBeforeTs: number; deletedTs: Set<number> }> {
+  await initDb();
+  if (useMemory) {
+    return {
+      clearedBeforeTs: memClearMarkers.get(hiveId) ?? 0,
+      deletedTs: new Set(memDeletedReadings.get(hiveId) ?? []),
+    };
+  }
+  const clearRow = await db!.query(
+    'SELECT cleared_before_ts FROM hive_clear_markers WHERE hive_id = ? LIMIT 1',
+    [hiveId],
+  );
+  const cutoff = (clearRow.values?.[0] as { cleared_before_ts?: number } | undefined)?.cleared_before_ts ?? 0;
+  const delRows = await db!.query('SELECT ts FROM deleted_readings WHERE hive_id = ?', [hiveId]);
+  const deletedTs = new Set<number>((delRows.values ?? []).map((r) => (r as { ts: number }).ts));
+  return { clearedBeforeTs: cutoff, deletedTs };
 }
 
 export async function initDb(): Promise<void> {
@@ -95,6 +176,11 @@ export async function upsertHive(h: Hive): Promise<void> {
 
 export async function insertReading(r: Reading): Promise<void> {
   await initDb();
+  if (useMemory) {
+    if (isSuppressedInMemory(r.hive_id, r.ts)) return;
+  } else if (await isSuppressedInDb(r.hive_id, r.ts)) {
+    return;
+  }
   if (useMemory) {
     memReadings.push({ ...r, synced: 0 });
     return;
@@ -250,6 +336,7 @@ export async function renameHiveLocal(hiveId: string, name: string): Promise<voi
 export async function deleteReadings(hiveId: string, timestamps: number[]): Promise<void> {
   await initDb();
   if (!timestamps.length) return;
+  await markDeletedReadings(hiveId, timestamps);
   if (useMemory) {
     for (let i = memReadings.length - 1; i >= 0; i--) {
       const r = memReadings[i];
@@ -264,6 +351,7 @@ export async function deleteReadings(hiveId: string, timestamps: number[]): Prom
 /** Permanently delete all cached readings for a hive. */
 export async function deleteAllReadings(hiveId: string): Promise<void> {
   await initDb();
+  await markHiveCleared(hiveId, Date.now());
   if (useMemory) {
     for (let i = memReadings.length - 1; i >= 0; i--) {
       if (memReadings[i].hive_id === hiveId) memReadings.splice(i, 1);
@@ -279,7 +367,9 @@ export async function clearLocalData(): Promise<void> {
   if (useMemory) {
     memReadings.length = 0;
     memHives.clear();
+    memDeletedReadings.clear();
+    memClearMarkers.clear();
     return;
   }
-  await db!.execute('DELETE FROM readings; DELETE FROM hives;');
+  await db!.execute('DELETE FROM deleted_readings; DELETE FROM hive_clear_markers; DELETE FROM readings; DELETE FROM hives;');
 }

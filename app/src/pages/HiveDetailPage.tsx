@@ -14,7 +14,7 @@ import {
 } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
-  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings, deleteAllReadings,
+  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings, deleteAllReadings, getDeletionState,
   type Reading,
 } from '../lib/db';
 import { useOnline } from '../lib/useOnline';
@@ -77,7 +77,9 @@ const HiveDetailPage: React.FC = () => {
       const s = await loadSettings();
       if (online && s.apiKey) {
         const cloud = await getReadings(s, id);
+        const del = await getDeletionState(id);
         for (const c of cloud) {
+          if (c.ts <= del.clearedBeforeTs || del.deletedTs.has(c.ts)) continue;
           await insertReading({
             hive_id: id, ts: c.ts, weight_kg: c.weight_kg ?? undefined,
             battery_v: c.battery_v ?? undefined, temp_c: c.temp_c ?? undefined,
@@ -145,7 +147,7 @@ const HiveDetailPage: React.FC = () => {
     if (deletedCloud) {
       setToast('Readings deleted from device and cloud.');
     } else if (online && s.apiKey) {
-      setToast('Cleared locally, but cloud delete failed. Some readings may reappear.');
+      setToast('Cleared locally. Cloud delete failed, but deleted rows stay hidden on this phone.');
     } else {
       setToast('Cleared locally while offline. Cloud history was not deleted.');
     }
@@ -171,7 +173,7 @@ const HiveDetailPage: React.FC = () => {
     if (deletedCloud) {
       setToast('All readings deleted from device and cloud.');
     } else if (online && s.apiKey) {
-      setToast('Cleared locally, but cloud delete failed. Old readings may reappear after refresh.');
+      setToast('Cleared locally. Cloud delete failed, but old rows stay hidden on this phone.');
     } else {
       setToast('Cleared locally while offline. Cloud history was not deleted.');
     }
