@@ -4,7 +4,7 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
@@ -16,6 +16,7 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
+import { findDeviceId, tareDevice, readDeviceDiagnostics } from '../lib/ble';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
@@ -28,6 +29,7 @@ const RANGE_MS: Record<'24h' | '7d' | '30d', number> = {
   '30d': 30 * 24 * 60 * 60 * 1000,
 };
 const EMPTY_KG = 18, FULL_KG = 60;
+const BAT_RECOVERY_THRESHOLD_V = 3.3;
 
 const HiveDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -52,6 +54,8 @@ const HiveDetailPage: React.FC = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [diagReport, setDiagReport] = useState<string | null>(null);
 
   async function load() {
     const [hives, last, recent, ap] = await Promise.all([
@@ -123,6 +127,54 @@ const HiveDetailPage: React.FC = () => {
     setToast('Readings deleted');
   }
 
+  async function runTare() {
+    const deviceName = id.toUpperCase();
+    setBusyAction('Taring scale');
+    try {
+      const deviceId = await findDeviceId(deviceName, 8000);
+      if (!deviceId) {
+        setToast('Scale not found. Reboot it, then try tare within the 60-second pairing window.');
+        return;
+      }
+      await tareDevice(deviceId);
+      setToast('Tare complete. The current load is now treated as zero.');
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function runAccuracyCheck() {
+    const deviceName = id.toUpperCase();
+    setBusyAction('Checking stand accuracy');
+    try {
+      const deviceId = await findDeviceId(deviceName, 8000);
+      if (!deviceId) {
+        setToast('Scale not found. Reboot it, then run the check within the 60-second pairing window.');
+        return;
+      }
+      const d = await readDeviceDiagnostics(deviceId);
+      const stable = d.spreadG <= 120;
+      const nearZero = Math.abs(d.weightKg) <= 0.2;
+      const verdict = stable && nearZero
+        ? 'Result: stable and near zero (looks good).'
+        : stable
+          ? 'Result: stable but not near zero (tare recommended).'
+          : 'Result: noisy reading (check stand leveling/load-cell wiring).';
+      setDiagReport(
+        `Weight ${d.weightKg.toFixed(2)} kg\n` +
+        `Spread ${d.spreadG} g\n` +
+        `Raw ${d.rawCounts}\n\n` +
+        `${verdict}`,
+      );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   const now = Date.now();
   const f = freshnessFor(latest?.ts ?? null, now);
   const rangeMs = range === 'custom' ? customDays * 86400_000 : RANGE_MS[range];
@@ -135,6 +187,7 @@ const HiveDetailPage: React.FC = () => {
   const fillPct = latest?.weight_kg != null
     ? Math.round(Math.max(0, Math.min(1, (latest.weight_kg - EMPTY_KG) / (FULL_KG - EMPTY_KG))) * 100)
     : null;
+  const batteryTooLowForOta = latest?.battery_v != null && latest.battery_v < BAT_RECOVERY_THRESHOLD_V;
 
   // Collapse consecutive identical weights into one row so a settled scale
   // doesn't show 30+ duplicate lines. Each group carries all its timestamps
@@ -202,6 +255,22 @@ const HiveDetailPage: React.FC = () => {
               <StatTile label="Device temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" />
               <StatTile label="Seen" value={relativeTime(latest?.ts, now)} />
             </div>
+
+            {batteryTooLowForOta && (
+              <div className="oa-card p-4 flex items-start gap-3">
+                <IonIcon icon={warningOutline} style={{ color: 'var(--ion-color-warning)', fontSize: 20, marginTop: 2 }} />
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-semibold" style={{ color: 'var(--oa-ink)' }}>
+                    Battery is low for firmware updates
+                  </span>
+                  <span className="text-xs oa-muted">
+                    Current battery is {latest?.battery_v?.toFixed(2)} V. OTA updates are blocked below
+                    {' '}{BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V by the scale's low-battery protection.
+                    Leave it in daylight to charge, then retry.
+                  </span>
+                </div>
+              </div>
+            )}
 
             <IonSegment value={range} onIonChange={(e) => { const v = (e.detail.value as Range) ?? '7d'; if (v === 'custom') setAskCustom(true); setRange(v); }}>
               <IonSegmentButton value="24h"><IonLabel>1D</IonLabel></IonSegmentButton>
@@ -288,7 +357,21 @@ const HiveDetailPage: React.FC = () => {
           buttons={[
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
-            { text: 'Firmware update', icon: hardwareChipOutline, handler: () => router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward') },
+            { text: busyAction ? 'Tare stand (busy)' : 'Tare stand', icon: checkmarkCircle, handler: () => { void runTare(); } },
+            { text: busyAction ? 'Stand accuracy check (busy)' : 'Stand accuracy check', icon: warningOutline, handler: () => { void runAccuracyCheck(); } },
+            {
+              text: batteryTooLowForOta ? 'Firmware update (battery low)' : 'Firmware update',
+              icon: hardwareChipOutline,
+              handler: () => {
+                if (batteryTooLowForOta) {
+                  setToast(
+                    `Battery is ${latest?.battery_v?.toFixed(2) ?? '--'} V. ` +
+                    `Charge above ${BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V before OTA.`,
+                  );
+                }
+                router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward');
+              },
+            },
             { text: 'Cancel', role: 'cancel' },
           ]} />
         <IonActionSheet isOpen={showMove} onDidDismiss={() => setShowMove(false)} header="Move to apiary"
@@ -307,6 +390,13 @@ const HiveDetailPage: React.FC = () => {
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Save', handler: (d) => { void doRename(d.name); } }]} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
+        <IonAlert
+          isOpen={!!diagReport}
+          onDidDismiss={() => setDiagReport(null)}
+          header="Stand accuracy"
+          message={diagReport ?? ''}
+          buttons={[{ text: 'OK', role: 'cancel' }]}
+        />
         <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
           message="Number of days to show (1\u2013730)."
           inputs={[{ name: 'days', type: 'number', value: customDays, min: 1, max: 730 }]}

@@ -119,6 +119,40 @@ export async function stopScan(): Promise<void> {
 export const OA_CONFIG_SERVICE = '0a000000-0a51-4000-b000-000000000001';
 export const OA_CHAR_NAME      = '0a000001-0a51-4000-b000-000000000001'; // utf-8, max 16 bytes
 export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 bytes: u32 epoch LE + i16 tzOffsetMin LE
+export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
+export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
+
+export interface OADiagnostics {
+  weightKg: number;
+  spreadG: number;
+  rawCounts: number;
+}
+
+function oneByte(v: number): DataView {
+  const dv = new DataView(new ArrayBuffer(1));
+  dv.setUint8(0, v & 0xff);
+  return dv;
+}
+
+function toBytes(v: DataView): Uint8Array {
+  return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+}
+
+function parseDiagnostics(v: DataView): OADiagnostics {
+  const b = toBytes(v);
+  if (b.length < 10) throw new Error('Scale diagnostics payload is malformed.');
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const status = dv.getUint8(0);
+  if (status !== 0) throw new Error('Scale reported a diagnostics error.');
+  const weightCentiKg = dv.getInt16(2, true);
+  const spreadG = dv.getUint16(4, true);
+  const rawCounts = dv.getInt32(6, true);
+  return {
+    weightKg: weightCentiKg / 100,
+    spreadG,
+    rawCounts,
+  };
+}
 
 function textToDataView(s: string): DataView {
   const bytes = new TextEncoder().encode(s);
@@ -177,6 +211,56 @@ export async function configureDevice(
 }
 
 /**
+ * Trigger an immediate tare on the scale during its pairing window.
+ */
+export async function tareDevice(deviceId: string): Promise<void> {
+  await ensureInit();
+  await withTimeout(
+    BleClient.connect(deviceId, () => undefined),
+    15000,
+    'Connect to scale',
+  );
+  try {
+    await withTimeout(
+      BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_TARE, oneByte(1)),
+      8000,
+      'Write tare command',
+    );
+  } finally {
+    try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+  }
+}
+
+/**
+ * Request a one-shot HX711 diagnostics sample from the scale.
+ */
+export async function readDeviceDiagnostics(deviceId: string): Promise<OADiagnostics> {
+  await ensureInit();
+  await withTimeout(
+    BleClient.connect(deviceId, () => undefined),
+    15000,
+    'Connect to scale',
+  );
+  try {
+    await withTimeout(
+      BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE, oneByte(1)),
+      8000,
+      'Request diagnostics sample',
+    );
+    // Let firmware populate the payload before reading it back.
+    await new Promise((r) => setTimeout(r, 180));
+    const sample = await withTimeout(
+      BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE),
+      8000,
+      'Read diagnostics sample',
+    );
+    return parseDiagnostics(sample);
+  } finally {
+    try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+  }
+}
+
+/**
  * Briefly scan to resolve the live BLE deviceId for a known scale name
  * (e.g. "OA-ABCB"). Resolves null if the scale isn't heard within `ms`
  * (asleep / out of range). Used before a rename so we can connect to it.
@@ -201,6 +285,45 @@ export async function findDeviceId(deviceName: string, ms = 6000): Promise<strin
           clearTimeout(timer);
           finish(result.device.deviceId);
         }
+      },
+    ).catch(() => { clearTimeout(timer); finish(null); });
+  });
+}
+
+/**
+ * Briefly scan for a single BTHome advert from a named scale and return the
+ * parsed reading (which includes `fwVersion`). Resolves null if not heard
+ * within `ms`. Used by the Firmware page to show the installed version.
+ */
+export async function readAdvertOnce(deviceName: string, ms = 6000): Promise<OAAdvert | null> {
+  await ensureInit();
+  const wanted = deviceName.toLowerCase();
+  return new Promise<OAAdvert | null>((resolve) => {
+    let done = false;
+    const finish = (a: OAAdvert | null) => {
+      if (done) return;
+      done = true;
+      void BleClient.stopLEScan().catch(() => undefined);
+      resolve(a);
+    };
+    const timer = setTimeout(() => finish(null), ms);
+    BleClient.requestLEScan(
+      { services: [BTHOME_SERVICE_UUID_128], allowDuplicates: true },
+      (result) => {
+        const name = result.localName ?? result.device.name ?? '';
+        if (name.toLowerCase() !== wanted) return;
+        const payload = extractServiceData(result);
+        if (!payload) return;
+        const reading = parseBTHome(payload);
+        if (!reading) return;
+        clearTimeout(timer);
+        finish({
+          ...reading,
+          deviceId: result.device.deviceId,
+          deviceName: name,
+          rssi: result.rssi ?? 0,
+          ts: Date.now(),
+        });
       },
     ).catch(() => { clearTimeout(timer); finish(null); });
   });

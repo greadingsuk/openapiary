@@ -59,7 +59,7 @@ directly to the XIAO; no breakout PCB.
 
 - 1× 3.7 V LiPo, **603048**, ~1000 mAh, bare leads (no JST)
 - 1× 5 V / 1 W monocrystalline solar panel (~110 × 60 mm, Voc ~5.5 V, Isc ~200 mA)
-- 1× 2-terminal rocker switch (SPST)
+- 1× 2-terminal rocker switch (SPST) — **NOTE: cuts battery line only** (see rationale below)
 
 ### Topology
 
@@ -79,23 +79,38 @@ a good match for a 1 W panel that peaks around 200 mA in direct sun.
 
 - The charger blocks reverse current from BAT to VBUS, so no Schottky diode
   is needed in the solar line.
+- Solar is **always connected to VBUS** so the battery charges whenever the panel
+  delivers, independent of the ON/OFF switch.
 - When the panel is in shade/night, VBUS floats and the chip runs from BAT as
   normal. Firmware's `vbusPresent()` reads `false` in that state and the
   charging-state telemetry field reports `0`.
 - When the panel is delivering, `vbusPresent()` reads `true` and the firmware
   broadcasts charging = 1 — useful for spotting cloudy days in the data.
 
-### Switch placement
+### Switch placement (battery line only)
 
 The rocker goes on the **battery + line** (between LiPo + and the BAT pad).
 
-- OFF + dark → unit fully off, zero battery drain. Safe for storage/transit.
-- OFF + sun → chip runs from solar via VBUS; battery isolated, not charged.
-  Harmless but obviously not useful in the field; just turn the switch ON.
-- ON → normal operation, solar tops up the cell during the day.
+- **OFF + dark** → unit fully off, zero current draw. Safe for storage/transit.
+  Battery is isolated but NOT discharged; stays at rest voltage.
+- **OFF + sun** → **battery charges from solar via VBUS, but device does NOT run**
+  (BAT pad is isolated). Charger is active; battery voltage increases over time.
+  Useful for remote charging without powering the device.
+- **ON** → normal operation. Device runs, solar tops up the cell during the day.
 
-A 2-terminal rocker can only break one line; cutting battery + is the right
-choice because it makes "OFF" mean "battery isolated".
+This topology gives you:
+- ✅ Battery isolation (switch controls device power)
+- ✅ Charging while off (solar always charges via VBUS)
+- ✅ Safe storage (zero device drain when switch is off)
+
+### Historical note: Why NOT double-pole?
+
+A double-pole (DPST) switch that cuts both solar + and battery + would achieve
+true zero-current sleep, but it would **prevent battery charging while off**.
+The single-pole design prioritizes charging during dormancy, which is more useful
+for a remote hive scale that may sit unused for weeks but still needs to maintain
+battery health. If you later want true offline storage (no charging), add a
+separate battery disconnect in series.
 
 ### Soldering order (recommended)
 

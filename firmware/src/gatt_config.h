@@ -7,11 +7,14 @@
 //   Service : 0a000000-0a51-4000-b000-000000000001
 //   Name    : 0a000001-0a51-4000-b000-000000000001  (utf-8, ≤16 bytes, write)
 //   Time    : 0a000002-0a51-4000-b000-000000000001  (8 bytes: u32 epoch LE + i16 tzOffsetMin LE, write)
+//   Tare    : 0a000003-0a51-4000-b000-000000000001  (write any byte to tare now)
+//   Sample  : 0a000004-0a51-4000-b000-000000000001  (write to refresh, then read 10-byte diagnostics payload)
 
 #pragma once
 #include <Arduino.h>
 #include <bluefruit.h>
 #include "persist.h"
+#include "hx711_helper.h"
 
 namespace OAConfig {
 
@@ -26,10 +29,18 @@ static uint8_t UUID_NAME[16] = {
 static uint8_t UUID_TIME[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x02,0x00,0x00,0x0a
 };
+static uint8_t UUID_TARE[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x03,0x00,0x00,0x0a
+};
+static uint8_t UUID_SAMPLE[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x04,0x00,0x00,0x0a
+};
 
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
 inline BLECharacteristic& timeChar() { static BLECharacteristic c(UUID_TIME);    return c; }
+inline BLECharacteristic& tareChar() { static BLECharacteristic c(UUID_TARE);    return c; }
+inline BLECharacteristic& sampleChar(){ static BLECharacteristic c(UUID_SAMPLE);  return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -78,6 +89,54 @@ inline void onTimeWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data
     (void)chr;
 }
 
+// Tare write: capture current raw as the zero offset, apply immediately, mark dirty.
+inline void onTareWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*data*/, uint16_t /*len*/) {
+    if (!g_state) return;
+    long raw = hx711_read_raw_average(20);
+    g_state->tareOffset = raw;
+    hx711_set_offset(raw);
+    g_dirty = true;
+    (void)chr;
+}
+
+// Sample write: refresh diagnostics payload for immediate read by the phone.
+// Payload (10 bytes):
+//   [0]    status (0=ok, 1=error)
+//   [1]    reserved
+//   [2..3] weight_centi_kg (int16 LE)
+//   [4..5] spread_g (uint16 LE)
+//   [6..9] raw_counts (int32 LE)
+inline void onSampleWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*data*/, uint16_t /*len*/) {
+    uint8_t out[10] = {0};
+
+    float kg = hx711_read_median(10);
+    uint16_t spread = hx711_last_spread_g();
+    long raw = hx711_read_raw_average(1);
+    hx711_sleep();
+
+    if (isnan(kg)) {
+        out[0] = 1;
+    } else {
+        long centi = lroundf(kg * 100.0f);
+        if (centi < -32768L) centi = -32768L;
+        if (centi >  32767L) centi =  32767L;
+        int16_t kgc = (int16_t)centi;
+        int32_t r32 = (int32_t)raw;
+
+        out[2] = (uint8_t)(kgc & 0xFF);
+        out[3] = (uint8_t)((kgc >> 8) & 0xFF);
+        out[4] = (uint8_t)(spread & 0xFF);
+        out[5] = (uint8_t)((spread >> 8) & 0xFF);
+        out[6] = (uint8_t)(r32 & 0xFF);
+        out[7] = (uint8_t)((r32 >> 8) & 0xFF);
+        out[8] = (uint8_t)((r32 >> 16) & 0xFF);
+        out[9] = (uint8_t)((r32 >> 24) & 0xFF);
+    }
+
+    sampleChar().write(out, sizeof(out));
+    (void)chr;
+}
+
 // Register the service + characteristics. Call after Bluefruit.begin().
 inline void begin(OAPersist::State* state) {
     g_state = state;
@@ -95,6 +154,20 @@ inline void begin(OAPersist::State* state) {
     timeChar().setMaxLen(8);
     timeChar().setWriteCallback(onTimeWrite);
     timeChar().begin();
+
+    tareChar().setProperties(CHR_PROPS_WRITE);
+    tareChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    tareChar().setMaxLen(1);
+    tareChar().setWriteCallback(onTareWrite);
+    tareChar().begin();
+
+    sampleChar().setProperties(CHR_PROPS_READ | CHR_PROPS_WRITE);
+    sampleChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    sampleChar().setFixedLen(10);
+    uint8_t init[10] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    sampleChar().write(init, sizeof(init));
+    sampleChar().setWriteCallback(onSampleWrite);
+    sampleChar().begin();
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.
