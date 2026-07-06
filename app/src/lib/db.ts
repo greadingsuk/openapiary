@@ -261,6 +261,18 @@ export async function deleteReadings(hiveId: string, timestamps: number[]): Prom
   await db!.run(`DELETE FROM readings WHERE hive_id = ? AND ts IN (${ph})`, [hiveId, ...timestamps]);
 }
 
+/** Permanently delete all cached readings for a hive. */
+export async function deleteAllReadings(hiveId: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    for (let i = memReadings.length - 1; i >= 0; i--) {
+      if (memReadings[i].hive_id === hiveId) memReadings.splice(i, 1);
+    }
+    return;
+  }
+  await db!.run('DELETE FROM readings WHERE hive_id = ?', [hiveId]);
+}
+
 /** Wipe all cached hives + readings (used on sign-out so accounts don't bleed). */
 export async function clearLocalData(): Promise<void> {
   await initDb();

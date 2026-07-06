@@ -2,9 +2,12 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet, IonAlert,
+  IonActionSheet, IonAlert, IonToast,
 } from '@ionic/react';
-import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline, fileTrayFullOutline } from 'ionicons/icons';
+import {
+  add, settingsOutline, cloudOfflineOutline, batteryHalfOutline,
+  swapVerticalOutline, fileTrayFullOutline, syncOutline,
+} from 'ionicons/icons';
 import { useState } from 'react';
 import { listHives } from '../lib/api';
 import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
@@ -12,6 +15,7 @@ import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { loadApiaries, apiaryOf, apiaryNames, upsertApiary, setHiveApiary, type ApiaryStore } from '../lib/apiaries';
+import { syncNearbyKnownHives } from '../lib/nearbySync';
 import { StatusDot, EmptyState, ErrorState, ListSkeleton } from '../components/ui';
 
 type Sort = 'name' | 'weight' | 'recent';
@@ -29,6 +33,8 @@ const HiveListPage: React.FC = () => {
   const [showApiaryMenu, setShowApiaryMenu] = useState(false);
   const [showNewApiary, setShowNewApiary] = useState(false);
   const [assignHive, setAssignHive] = useState<Hive | null>(null);
+  const [syncingNearby, setSyncingNearby] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   async function load() {
     setError(null);
@@ -69,6 +75,21 @@ const HiveListPage: React.FC = () => {
   async function assignHiveToApiary(hiveId: string, apiary: string) {
     await setHiveApiary(hiveId, apiary);
     setApiaries(await loadApiaries());
+  }
+
+  async function runNearbySync() {
+    if (syncingNearby) return;
+    setSyncingNearby(true);
+    try {
+      const r = await syncNearbyKnownHives();
+      await load();
+      const cloudBits = `${r.cloud.succeeded}/${r.cloud.attempted} uploaded`;
+      setToast(`Nearby sync complete: ${r.stored} reading(s) captured, ${cloudBits}.`);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncingNearby(false);
+    }
   }
 
   const now = Date.now();
@@ -138,6 +159,9 @@ const HiveListPage: React.FC = () => {
             )}
             <IonButton fill="clear" onClick={() => setSortOpen(true)} aria-label="Sort">
               <IonIcon slot="icon-only" icon={swapVerticalOutline} />
+            </IonButton>
+            <IonButton fill="clear" onClick={() => { void runNearbySync(); }} aria-label="Sync nearby hives" disabled={syncingNearby}>
+              <IonIcon slot="icon-only" icon={syncOutline} />
             </IonButton>
             <IonButton fill="clear" onClick={() => setShowApiaryMenu(true)} aria-label="Apiaries">
               <IonIcon slot="icon-only" icon={fileTrayFullOutline} />
@@ -248,6 +272,7 @@ const HiveListPage: React.FC = () => {
             },
           ]}
         />
+        <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
       </IonContent>
     </IonPage>
   );

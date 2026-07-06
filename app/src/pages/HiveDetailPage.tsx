@@ -7,10 +7,10 @@ import {
 import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getReadings } from '../lib/api';
+import { getReadings, deleteAllReadings as deleteAllReadingsCloud } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
-  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings,
+  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings, deleteAllReadings,
   type Reading,
 } from '../lib/db';
 import { useOnline } from '../lib/useOnline';
@@ -47,6 +47,7 @@ const HiveDetailPage: React.FC = () => {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [showRename, setShowRename] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMove, setShowMove] = useState(false);
@@ -125,6 +126,32 @@ const HiveDetailPage: React.FC = () => {
     setSelectMode(false);
     await load();
     setToast('Readings deleted');
+  }
+
+  async function deleteAllForHive() {
+    const s = await loadSettings();
+    let deletedCloud = false;
+    if (online && s.apiKey) {
+      try {
+        await deleteAllReadingsCloud(s, id);
+        deletedCloud = true;
+      } catch {
+        deletedCloud = false;
+      }
+    }
+
+    await deleteAllReadings(id);
+    setSelected(new Set());
+    setSelectMode(false);
+    await load();
+
+    if (deletedCloud) {
+      setToast('All readings deleted from device and cloud.');
+    } else if (online && s.apiKey) {
+      setToast('Cleared locally, but cloud delete failed. Old readings may reappear after refresh.');
+    } else {
+      setToast('Cleared locally while offline. Cloud history was not deleted.');
+    }
   }
 
   async function runTare() {
@@ -359,6 +386,7 @@ const HiveDetailPage: React.FC = () => {
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
             { text: busyAction ? 'Tare stand (busy)' : 'Tare stand', icon: checkmarkCircle, handler: () => { void runTare(); } },
             { text: busyAction ? 'Stand accuracy check (busy)' : 'Stand accuracy check', icon: warningOutline, handler: () => { void runAccuracyCheck(); } },
+            { text: 'Delete all readings', role: 'destructive', handler: () => setConfirmDeleteAll(true) },
             {
               text: batteryTooLowForOta ? 'Firmware update (battery low)' : 'Firmware update',
               icon: hardwareChipOutline,
@@ -404,6 +432,20 @@ const HiveDetailPage: React.FC = () => {
         <IonAlert isOpen={confirmDelete} onDidDismiss={() => setConfirmDelete(false)} header="Delete readings"
           message={`Permanently delete ${selected.size} reading${selected.size === 1 ? '' : 's'}? This can't be undone.`}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Delete', role: 'destructive', handler: () => { void deleteSelected(); } }]} />
+        <IonAlert
+          isOpen={confirmDeleteAll}
+          onDidDismiss={() => setConfirmDeleteAll(false)}
+          header="Delete all readings"
+          message="Permanently delete every reading for this hive? This can't be undone."
+          buttons={[
+            { text: 'Cancel', role: 'cancel' },
+            {
+              text: 'Delete all',
+              role: 'destructive',
+              handler: () => { void deleteAllForHive(); },
+            },
+          ]}
+        />
       </IonContent>
     </IonPage>
   );

@@ -117,6 +117,17 @@ export async function getReadings(s: Settings, hiveId: string): Promise<HiveRead
   return j.readings ?? [];
 }
 
+/** Delete all cloud readings for a hive (owner-only). */
+export async function deleteAllReadings(s: Settings, hiveId: string): Promise<number> {
+  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}/readings`, {
+    method: 'DELETE',
+    headers: headers(s),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `DELETE readings ${r.status}`);
+  return Number((j as { deleted?: number }).deleted ?? 0);
+}
+
 /** Update a hive's mutable fields (currently the friendly name). */
 export async function patchHive(
   s: Settings,

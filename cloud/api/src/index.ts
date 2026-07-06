@@ -12,6 +12,7 @@
 //   POST   /v1/readings                  bulk-insert from app (scoped to caller)
 //   GET    /v1/hives                     list caller's hives
 //   GET    /v1/hives/:id/readings        time-range query
+//   DELETE /v1/hives/:id/readings        delete all readings for one hive
 //   PATCH  /v1/hives/:id                 update name / public / lat / lon / region
 //
 //   --- admin (X-Admin-Key) ---
@@ -26,6 +27,9 @@ type Bindings = {
     DB: D1Database;
     API_KEY: string;          // legacy single-tenant key (kept for back-compat)
     ADMIN_KEY: string;        // separate key for fleet/* admin endpoints
+    GITHUB_TOKEN?: string;    // PAT (contents:read) for the PRIVATE firmware repo — secret, never sent to the app
+    GITHUB_REPO?: string;     // "owner/repo" that publishes firmware releases (plain var)
+    FIRMWARE_PUBLIC_KEY?: string; // Ed25519 public key (32-byte hex) firmware packages must be signed with
 };
 
 type User = {
@@ -58,7 +62,7 @@ app.use(
     cors({
         origin: "*",
         allowHeaders: ["Content-Type", "X-API-Key", "X-Admin-Key"],
-        allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
+        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         maxAge: 86400,
     })
 );
@@ -217,8 +221,175 @@ app.use("/v1/admin/*", async (c, next) => {
     c.res.headers.set("Access-Control-Allow-Origin", "*");
 });
 
+// ---------------------------------------------------------------------------
+// Firmware distribution (OTA)
+//
+// The firmware binary lives on a PRIVATE GitHub release. The Worker holds the
+// access token (GITHUB_TOKEN secret) so the app never sees a credential and
+// never talks to GitHub directly — it only ever calls these Worker endpoints
+// with its normal X-API-Key. This keeps the whole OTA path inside the existing
+// Cloudflare + private-GitHub architecture (no Microsoft Azure resources).
+//
+//   GET /v1/firmware/latest            metadata + signed manifest + download URLs
+//   GET /v1/firmware/download?asset=…  streams the DFU .zip (asset=dfu) or .uf2 (asset=uf2)
+//
+// Both require a valid X-API-Key (enforced by the /v1/* auth middleware above).
+// ---------------------------------------------------------------------------
+type GhAsset = { name: string; size: number; url: string };
+type GhRelease = { tag_name: string; name: string; body: string; assets: GhAsset[] };
+
+async function ghLatestRelease(env: Bindings): Promise<GhRelease | null> {
+    if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return null;
+    const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/releases/latest`, {
+        headers: {
+            Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+            Accept: "application/vnd.github+json",
+            "User-Agent": "openapiary-worker",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    });
+    if (!r.ok) return null;
+    return r.json<GhRelease>();
+}
+
+// Fetch a release asset's raw bytes. GitHub 302-redirects private assets to a
+// pre-signed URL that must be hit WITHOUT the Authorization header (else it
+// rejects with "only one auth mechanism allowed"), so follow the redirect
+// manually and drop the header on the second hop.
+async function ghFetchAsset(env: Bindings, asset: GhAsset): Promise<Response> {
+    const r = await fetch(asset.url, {
+        headers: {
+            Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+            Accept: "application/octet-stream",
+            "User-Agent": "openapiary-worker",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        redirect: "manual",
+    });
+    if (r.status >= 300 && r.status < 400) {
+        const loc = r.headers.get("location");
+        if (loc) return fetch(loc); // pre-signed URL — no auth header
+    }
+    return r;
+}
+
+type FwManifest = {
+    version?: string;
+    zip?: { name: string; size: number; sha256: string; sig: string };
+    uf2?: { name: string; size: number; sha256: string };
+};
+
+async function fwManifest(env: Bindings, rel: GhRelease): Promise<FwManifest | null> {
+    const man = rel.assets.find((a) => a.name === "manifest.json");
+    if (!man) return null;
+    return ghFetchAsset(env, man)
+        .then((r) => (r.ok ? r.json<FwManifest>() : null))
+        .catch(() => null);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+    const clean = hex.trim().toLowerCase();
+    const out = new Uint8Array(Math.floor(clean.length / 2));
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    return out;
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+    const bin = atob(b64.trim());
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+// Authenticity gate: the firmware .zip must match the manifest sha256 AND carry
+// a valid Ed25519 signature from the pinned key. The key lives here on our infra,
+// so a compromised GitHub/CDN can't get a malicious image past this check.
+async function verifyFirmware(env: Bindings, zip: Uint8Array, manifest: FwManifest | null): Promise<string | null> {
+    if (!manifest?.zip?.sha256 || !manifest.zip.sig) return "unsigned firmware manifest";
+    if (!env.FIRMWARE_PUBLIC_KEY) return "no firmware public key configured";
+
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", zip));
+    const gotSha = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (gotSha !== manifest.zip.sha256.trim().toLowerCase()) return "sha256 mismatch";
+
+    try {
+        const key = await crypto.subtle.importKey(
+            "raw",
+            hexToBytes(env.FIRMWARE_PUBLIC_KEY),
+            { name: "Ed25519" },
+            false,
+            ["verify"]
+        );
+        const ok = await crypto.subtle.verify("Ed25519", key, b64ToBytes(manifest.zip.sig), zip);
+        return ok ? null : "invalid signature";
+    } catch {
+        return "signature verification error";
+    }
+}
+
+app.get("/v1/firmware/latest", async (c) => {
+    if (!c.env.GITHUB_TOKEN || !c.env.GITHUB_REPO)
+        return c.json({ error: "firmware source not configured" }, 503);
+    const rel = await ghLatestRelease(c.env);
+    if (!rel) return c.json({ error: "no firmware published yet" }, 404);
+
+    // The manifest (produced by the signing pipeline) carries the sha256 + the
+    // detached Ed25519 signature. It's small, so fetching it on the metadata
+    // call is cheap. The Worker also enforces the signature at /download.
+    const manifest = await fwManifest(c.env, rel);
+
+    const origin = new URL(c.req.url).origin;
+    const zip = rel.assets.find((a) => a.name.endsWith(".zip"));
+    const uf2 = rel.assets.find((a) => a.name.endsWith(".uf2"));
+    return c.json(
+        {
+            version: rel.tag_name,
+            notes: rel.body ?? "",
+            zip: zip ? { name: zip.name, size: zip.size, downloadUrl: `${origin}/v1/firmware/download?asset=dfu` } : null,
+            uf2: uf2 ? { name: uf2.name, size: uf2.size, downloadUrl: `${origin}/v1/firmware/download?asset=uf2` } : null,
+            manifest,
+        },
+        200,
+        { "Cache-Control": "public, max-age=300" }
+    );
+});
+
+app.get("/v1/firmware/download", async (c) => {
+    const which = c.req.query("asset") === "uf2" ? "uf2" : "dfu";
+    if (!c.env.GITHUB_TOKEN || !c.env.GITHUB_REPO)
+        return c.json({ error: "firmware source not configured" }, 503);
+    const rel = await ghLatestRelease(c.env);
+    if (!rel) return c.json({ error: "no firmware published yet" }, 404);
+
+    const asset =
+        which === "uf2"
+            ? rel.assets.find((a) => a.name.endsWith(".uf2"))
+            : rel.assets.find((a) => a.name.endsWith(".zip"));
+    if (!asset) return c.json({ error: "asset not found" }, 404);
+
+    const upstream = await ghFetchAsset(c.env, asset);
+    if (!upstream.ok) return c.json({ error: "upstream fetch failed" }, 502);
+    const bytes = new Uint8Array(await upstream.arrayBuffer());
+
+    // Enforce authenticity for the DFU image before it ever reaches a scale.
+    // (The .uf2 is a manual USB recovery artifact, flashed via the bootloader's
+    // own signature check, so it isn't gated here.)
+    if (which === "dfu") {
+        const reason = await verifyFirmware(c.env, bytes, await fwManifest(c.env, rel));
+        if (reason) return c.json({ error: `firmware rejected: ${reason}` }, 409);
+    }
+
+    return new Response(bytes, {
+        status: 200,
+        headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": `attachment; filename="${asset.name}"`,
+            "Cache-Control": "public, max-age=300",
+        },
+    });
+});
+
 // --- POST /v1/account/register ---
-// Body: { email?, password? }
 //   - email + password  → a full account that can log in from any device.
 //   - neither           → an anonymous "try it" account (can be upgraded later).
 app.post("/v1/account/register", async (c) => {
@@ -384,6 +555,20 @@ app.get("/v1/hives/:id/readings", async (c) => {
         .bind(id, from, to)
         .all();
     return c.json({ readings: results });
+});
+
+// --- DELETE /v1/hives/:id/readings ---
+app.delete("/v1/hives/:id/readings", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+
+    const owner = await c.env.DB.prepare(`SELECT user_id FROM hives WHERE id = ?`)
+        .bind(id)
+        .first<{ user_id: string | null }>();
+    if (!owner || owner.user_id !== user.id) return c.json({ error: "not found" }, 404);
+
+    const result = await c.env.DB.prepare(`DELETE FROM readings WHERE hive_id = ?`).bind(id).run();
+    return c.json({ ok: true, deleted: result.meta.changes ?? 0 });
 });
 
 // --- PATCH /v1/hives/:id ---
