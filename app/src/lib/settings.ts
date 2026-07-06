@@ -12,9 +12,9 @@ export interface Settings {
 const KEY = 'openapiary.settings.v1';
 
 const DEFAULTS: Settings = {
-  apiUrl: 'https://oa-api-staging.grantjreadings.workers.dev',
+  apiUrl: 'https://api.openapiaryproject.com',
   apiKey: '',
-  syncEnabled: false,
+  syncEnabled: true,
   backgroundScan: false,
   accountEmail: null,
 };
