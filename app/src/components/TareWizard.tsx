@@ -28,6 +28,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [diag, setDiag] = useState<OADiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     if (isOpen) {
@@ -37,6 +38,14 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
       setError(null);
     }
   }, [isOpen]);
+
+  // Count up while waiting to connect so the user sees progress.
+  useEffect(() => {
+    if (step !== 'connecting') return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [step]);
 
   async function connect() {
     setStep('connecting');
@@ -109,7 +118,9 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
         {step === 'connecting' && (
           <div className="flex flex-col items-center gap-3 text-center py-8">
             <IonSpinner name="dots" />
-            <p className="oa-muted text-sm">Waiting for {deviceName}'s next heartbeat (up to ~60s)…</p>
+            <p className="oa-muted text-sm">Waiting for {deviceName}'s next heartbeat…</p>
+            <p className="oa-numeral text-2xl font-semibold" style={{ color: 'var(--oa-ink)' }}>{elapsed}s</p>
+            <p className="oa-subtle text-xs">Scales check in about once a minute. Keep the phone close.</p>
           </div>
         )}
 

@@ -274,14 +274,25 @@ export async function readDeviceDiagnostics(deviceId: string): Promise<OADiagnos
       8000,
       'Request diagnostics sample',
     );
-    // Let firmware populate the payload before reading it back.
-    await new Promise((r) => setTimeout(r, 180));
-    const sample = await withTimeout(
-      BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE),
-      8000,
-      'Read diagnostics sample',
-    );
-    return parseDiagnostics(sample);
+    // The firmware wakes the load cell and takes a median sample (~1s+). The
+    // characteristic starts as a status=1 placeholder, so poll until it reports
+    // a valid (status=0) reading rather than reading the placeholder too early.
+    const deadline = Date.now() + 6000;
+    let lastSample: DataView | null = null;
+    await new Promise((r) => setTimeout(r, 300));
+    while (Date.now() < deadline) {
+      const sample = await withTimeout(
+        BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE),
+        8000,
+        'Read diagnostics sample',
+      );
+      const b = new Uint8Array(sample.buffer, sample.byteOffset, sample.byteLength);
+      if (b.length >= 1 && b[0] === 0) return parseDiagnostics(sample);
+      lastSample = sample;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (lastSample) return parseDiagnostics(lastSample); // surfaces the scale's error
+    throw new Error('No diagnostics received from the scale.');
   } finally {
     try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
   }

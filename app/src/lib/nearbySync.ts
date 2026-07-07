@@ -8,17 +8,13 @@ export interface NearbySyncResult {
   cloud: SyncResult;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 /**
- * Short BLE sweep for already-known hives from the home list, then cloud sync.
- * This lets users refresh data without going through the Add Hive screen.
+ * BLE sweep for already-known hives from the home list, then cloud sync.
+ * Scales only broadcast about once a minute, so we scan up to `scanMs` but stop
+ * early as soon as every known hive has been heard. Lets users refresh data
+ * without going through the Add Hive screen.
  */
-export async function syncNearbyKnownHives(scanMs = 7000): Promise<NearbySyncResult> {
+export async function syncNearbyKnownHives(scanMs = 65000): Promise<NearbySyncResult> {
   const known = new Set((await listHivesLocal()).map((h) => h.id.toLowerCase()));
   if (!known.size) {
     return {
@@ -30,13 +26,17 @@ export async function syncNearbyKnownHives(scanMs = 7000): Promise<NearbySyncRes
 
   await ensureBleReady();
 
-  let heard = 0;
+  const heardIds = new Set<string>();
   let stored = 0;
-  try {
-    await startScan(async (a) => {
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    const timer = setTimeout(finish, scanMs);
+
+    void startScan(async (a) => {
       const hiveId = a.deviceName.toLowerCase();
       if (!known.has(hiveId)) return;
-      heard += 1;
+      heardIds.add(hiveId);
       await upsertHive({ id: hiveId, name: a.deviceName, created_at: Date.now() });
       await insertReading({
         hive_id: hiveId,
@@ -48,15 +48,15 @@ export async function syncNearbyKnownHives(scanMs = 7000): Promise<NearbySyncRes
         rssi: a.rssi,
       });
       stored += 1;
-    });
+      // Stop early once every known hive has checked in.
+      if (heardIds.size >= known.size) { clearTimeout(timer); finish(); }
+    }).catch(() => finish());
+  });
 
-    await delay(scanMs);
-  } finally {
-    await stopScan().catch(() => undefined);
-  }
+  await stopScan().catch(() => undefined);
 
   return {
-    heard,
+    heard: heardIds.size,
     stored,
     cloud: await syncNow(),
   };
