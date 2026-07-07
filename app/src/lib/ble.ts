@@ -219,82 +219,105 @@ export async function configureDevice(
 }
 
 /**
- * Trigger an immediate tare on the scale. While connected, opportunistically
- * seed the clock and (if provided) the day/night power window, so a routine
- * tare also keeps the scale's schedule up to date.
+ * Open a connection to the scale and keep it open. Use with the *Connected
+ * helpers below to run several operations in one session, then call
+ * disconnectDevice(). The firmware holds the link open for a couple of minutes.
+ */
+export async function connectDevice(deviceId: string): Promise<void> {
+  await ensureInit();
+  await withTimeout(
+    BleClient.connect(deviceId, () => undefined),
+    15000,
+    'Connect to scale',
+  );
+}
+
+export async function disconnectDevice(deviceId: string): Promise<void> {
+  try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+}
+
+/** Write the tare command on an already-open connection. */
+export async function tareConnected(deviceId: string): Promise<void> {
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_TARE, oneByte(1)),
+    8000,
+    'Write tare command',
+  );
+}
+
+/** Seed clock + day/night window on an already-open connection (non-fatal). */
+export async function pushScheduleConnected(
+  deviceId: string,
+  cfg: { tzOffsetMin?: number; dayStartMin?: number; dayEndMin?: number },
+): Promise<void> {
+  try {
+    const tz = cfg.tzOffsetMin ?? -new Date().getTimezoneOffset();
+    await BleClient.write(
+      deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME,
+      timeToDataView(Math.floor(Date.now() / 1000), tz),
+    );
+    if (cfg.dayStartMin != null && cfg.dayEndMin != null) {
+      await BleClient.write(
+        deviceId, OA_CONFIG_SERVICE, OA_CHAR_WINDOW,
+        windowToDataView(cfg.dayStartMin, cfg.dayEndMin),
+      );
+    }
+  } catch { /* schedule sync is non-fatal */ }
+}
+
+/** Request + read a diagnostics sample on an already-open connection. */
+export async function readDiagnosticsConnected(deviceId: string): Promise<OADiagnostics> {
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE, oneByte(1)),
+    8000,
+    'Request diagnostics sample',
+  );
+  // The firmware wakes the load cell and takes a median sample (~1s+). The
+  // characteristic starts as a status=1 placeholder, so poll until valid.
+  const deadline = Date.now() + 6000;
+  let lastSample: DataView | null = null;
+  await new Promise((r) => setTimeout(r, 300));
+  while (Date.now() < deadline) {
+    const sample = await withTimeout(
+      BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE),
+      8000,
+      'Read diagnostics sample',
+    );
+    const b = new Uint8Array(sample.buffer, sample.byteOffset, sample.byteLength);
+    if (b.length >= 1 && b[0] === 0) return parseDiagnostics(sample);
+    lastSample = sample;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (lastSample) return parseDiagnostics(lastSample); // surfaces the scale's error
+  throw new Error('No diagnostics received from the scale.');
+}
+
+/**
+ * One-shot tare (connect + tare + optional schedule sync + disconnect).
+ * Prefer the session primitives when doing several steps back-to-back.
  */
 export async function tareDevice(
   deviceId: string,
   cfg?: { tzOffsetMin?: number; dayStartMin?: number; dayEndMin?: number },
 ): Promise<void> {
-  await ensureInit();
-  await withTimeout(
-    BleClient.connect(deviceId, () => undefined),
-    15000,
-    'Connect to scale',
-  );
+  await connectDevice(deviceId);
   try {
-    await withTimeout(
-      BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_TARE, oneByte(1)),
-      8000,
-      'Write tare command',
-    );
-    // Best-effort schedule sync in the same connection (never fails the tare).
-    try {
-      const tz = cfg?.tzOffsetMin ?? -new Date().getTimezoneOffset();
-      await BleClient.write(
-        deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME,
-        timeToDataView(Math.floor(Date.now() / 1000), tz),
-      );
-      if (cfg?.dayStartMin != null && cfg?.dayEndMin != null) {
-        await BleClient.write(
-          deviceId, OA_CONFIG_SERVICE, OA_CHAR_WINDOW,
-          windowToDataView(cfg.dayStartMin, cfg.dayEndMin),
-        );
-      }
-    } catch { /* schedule sync is non-fatal */ }
+    await tareConnected(deviceId);
+    if (cfg) await pushScheduleConnected(deviceId, cfg);
   } finally {
-    try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+    await disconnectDevice(deviceId);
   }
 }
 
 /**
- * Request a one-shot HX711 diagnostics sample from the scale.
+ * One-shot diagnostics sample (connect + read + disconnect).
  */
 export async function readDeviceDiagnostics(deviceId: string): Promise<OADiagnostics> {
-  await ensureInit();
-  await withTimeout(
-    BleClient.connect(deviceId, () => undefined),
-    15000,
-    'Connect to scale',
-  );
+  await connectDevice(deviceId);
   try {
-    await withTimeout(
-      BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE, oneByte(1)),
-      8000,
-      'Request diagnostics sample',
-    );
-    // The firmware wakes the load cell and takes a median sample (~1s+). The
-    // characteristic starts as a status=1 placeholder, so poll until it reports
-    // a valid (status=0) reading rather than reading the placeholder too early.
-    const deadline = Date.now() + 6000;
-    let lastSample: DataView | null = null;
-    await new Promise((r) => setTimeout(r, 300));
-    while (Date.now() < deadline) {
-      const sample = await withTimeout(
-        BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_SAMPLE),
-        8000,
-        'Read diagnostics sample',
-      );
-      const b = new Uint8Array(sample.buffer, sample.byteOffset, sample.byteLength);
-      if (b.length >= 1 && b[0] === 0) return parseDiagnostics(sample);
-      lastSample = sample;
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    if (lastSample) return parseDiagnostics(lastSample); // surfaces the scale's error
-    throw new Error('No diagnostics received from the scale.');
+    return await readDiagnosticsConnected(deviceId);
   } finally {
-    try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+    await disconnectDevice(deviceId);
   }
 }
 

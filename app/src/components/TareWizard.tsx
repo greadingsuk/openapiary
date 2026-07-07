@@ -8,8 +8,11 @@ import {
 import {
   checkmarkCircle, warningOutline, bluetoothOutline, scaleOutline, refreshOutline,
 } from 'ionicons/icons';
-import { useEffect, useState } from 'react';
-import { findDeviceId, tareDevice, readDeviceDiagnostics, type OADiagnostics } from '../lib/ble';
+import { useEffect, useRef, useState } from 'react';
+import {
+  findDeviceId, connectDevice, disconnectDevice, tareConnected,
+  pushScheduleConnected, readDiagnosticsConnected, type OADiagnostics,
+} from '../lib/ble';
 import { ukDayWindow } from '../lib/sunWindow';
 
 type Step = 'prepare' | 'connecting' | 'measure' | 'taring' | 'verify' | 'error';
@@ -29,6 +32,19 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
   const [diag, setDiag] = useState<OADiagnostics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  // Track the live connection so we can drop it when the sheet closes.
+  const connectedIdRef = useRef<string | null>(null);
+
+  const dropConnection = () => {
+    const id = connectedIdRef.current;
+    connectedIdRef.current = null;
+    if (id) void disconnectDevice(id);
+  };
+
+  function close() {
+    dropConnection();
+    onClose();
+  }
 
   useEffect(() => {
     if (isOpen) {
@@ -36,8 +52,13 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
       setDeviceId(null);
       setDiag(null);
       setError(null);
+    } else {
+      dropConnection();
     }
   }, [isOpen]);
+
+  // Drop the connection if the component unmounts.
+  useEffect(() => () => dropConnection(), []);
 
   // Count up while waiting to connect so the user sees progress.
   useEffect(() => {
@@ -57,28 +78,51 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
         setStep('error');
         return;
       }
+      // Open ONE connection and keep it open across measure -> tare -> verify
+      // (the firmware holds the session up to ~2 min). Each step reuses it, so
+      // we never have to wait for another heartbeat mid-flow.
+      await connectDevice(found);
+      connectedIdRef.current = found;
       setDeviceId(found);
-      const d = await readDeviceDiagnostics(found);
+      const d = await readDiagnosticsConnected(found);
       setDiag(d);
       setStep('measure');
     } catch (e) {
+      dropConnection();
       setError(e instanceof Error ? e.message : String(e));
       setStep('error');
     }
   }
 
   async function setZero() {
-    if (!deviceId) return;
+    const id = connectedIdRef.current ?? deviceId;
+    if (!id) return;
     setStep('taring');
     setError(null);
     try {
       const w = ukDayWindow();
-      await tareDevice(deviceId, { dayStartMin: w.startMin, dayEndMin: w.endMin });
-      // Give the firmware a moment, then re-read to confirm.
-      const d = await readDeviceDiagnostics(deviceId);
+      await tareConnected(id);
+      await pushScheduleConnected(id, { dayStartMin: w.startMin, dayEndMin: w.endMin });
+      // Re-read on the SAME connection to confirm.
+      const d = await readDiagnosticsConnected(id);
       setDiag(d);
       setStep('verify');
     } catch (e) {
+      dropConnection();
+      setError(e instanceof Error ? e.message : String(e));
+      setStep('error');
+    }
+  }
+
+  // Re-read the live reading on the SAME open connection (no reconnect).
+  async function recheck() {
+    const id = connectedIdRef.current ?? deviceId;
+    if (!id) { void connect(); return; }
+    try {
+      const d = await readDiagnosticsConnected(id);
+      setDiag(d);
+    } catch (e) {
+      dropConnection();
       setError(e instanceof Error ? e.message : String(e));
       setStep('error');
     }
@@ -88,12 +132,12 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
   const stable = diag != null && diag.spreadG <= STABLE_SPREAD_G;
 
   return (
-    <IonModal isOpen={isOpen} onDidDismiss={onClose} initialBreakpoint={1} breakpoints={[0, 1]}>
+    <IonModal isOpen={isOpen} onDidDismiss={close} initialBreakpoint={1} breakpoints={[0, 1]}>
       <IonHeader>
         <IonToolbar>
           <IonTitle>Tare {deviceName}</IonTitle>
           <IonButtons slot="end">
-            <IonButton onClick={onClose}>Close</IonButton>
+            <IonButton onClick={close}>Close</IonButton>
           </IonButtons>
         </IonToolbar>
       </IonHeader>
@@ -106,8 +150,8 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
             </div>
             <ol className="flex flex-col gap-3 text-sm" style={{ color: 'var(--oa-ink)' }}>
               <li><strong>1.</strong> Put the scale on firm, level ground with only the empty stand on it (no hive/box).</li>
-              <li><strong>2.</strong> If the scale is asleep, press its button or reboot it to open the 60-second pairing window.</li>
-              <li><strong>3.</strong> Stand close to the scale so Bluetooth stays strong.</li>
+              <li><strong>2.</strong> Stand close to the scale so Bluetooth stays strong — no need to touch the scale.</li>
+              <li><strong>3.</strong> Tap Connect; it links up on the scale's next heartbeat (up to ~60s).</li>
             </ol>
             <IonButton expand="block" onClick={() => { void connect(); }}>
               <IonIcon slot="start" icon={bluetoothOutline} /> Connect to scale
@@ -150,7 +194,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
               With only the empty stand on the scale, tap below to set this as zero.
             </p>
             <div className="flex gap-2">
-              <IonButton fill="outline" className="flex-1" onClick={() => { void connect(); }}>
+              <IonButton fill="outline" className="flex-1" onClick={() => { void recheck(); }}>
                 <IonIcon slot="start" icon={refreshOutline} /> Re-check
               </IonButton>
               <IonButton className="flex-1" onClick={() => { void setZero(); }}>
@@ -195,7 +239,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
                   Zero again
                 </IonButton>
               )}
-              <IonButton className="flex-1" onClick={onClose}>Done</IonButton>
+              <IonButton className="flex-1" onClick={close}>Done</IonButton>
             </div>
           </div>
         )}
@@ -208,7 +252,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
             </div>
             <p className="text-sm oa-muted text-center">{error}</p>
             <div className="flex gap-2">
-              <IonButton fill="outline" className="flex-1" onClick={onClose}>Cancel</IonButton>
+              <IonButton fill="outline" className="flex-1" onClick={close}>Cancel</IonButton>
               <IonButton className="flex-1" onClick={() => { void connect(); }}>
                 <IonIcon slot="start" icon={refreshOutline} /> Try again
               </IonButton>
