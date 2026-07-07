@@ -41,9 +41,9 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
     setStep('connecting');
     setError(null);
     try {
-      const found = await findDeviceId(deviceName, 8000);
+      const found = await findDeviceId(deviceName, 65000);
       if (!found) {
-        setError('Scale not found. Press the scale button (or reboot it) to open the 60-second pairing window, then retry.');
+        setError('Scale not found. Move closer and try again — it becomes reachable on its next heartbeat (up to ~60s).');
         setStep('error');
         return;
       }
@@ -107,7 +107,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
         {step === 'connecting' && (
           <div className="flex flex-col items-center gap-3 text-center py-8">
             <IonSpinner name="dots" />
-            <p className="oa-muted text-sm">Looking for {deviceName}…</p>
+            <p className="oa-muted text-sm">Waiting for {deviceName}'s next heartbeat (up to ~60s)…</p>
           </div>
         )}
 

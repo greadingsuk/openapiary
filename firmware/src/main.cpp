@@ -44,6 +44,12 @@ static const uint32_t WAKE_DAY_MS   = 60UL * 1000UL;            // 06:00-22:00 l
 static const uint32_t WAKE_NIGHT_MS = 5UL * 60UL * 1000UL;      // 22:00-06:00 local
 static const uint32_t PAIRING_WINDOW_MS = 60UL * 1000UL;        // connectable window after boot
 static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets across ch 37/38/39
+// After each heartbeat the scale stays CONNECTABLE for this long so the app can
+// connect on demand (tare / calibration / diagnostics) with no button press.
+// If the app connects, the session is held open until it disconnects (or the
+// safety cap below), so multi-step calibration works within one connection.
+static const uint32_t SERVICE_WINDOW_MS  = 6000;                 // connectable catch window / cycle
+static const uint32_t SESSION_MAX_MS     = 120UL * 1000UL;       // max held connection (calibration)
 static const uint8_t  PERSIST_EVERY_N_CYCLES = 16;               // limit flash wear
 
 // ---- Power-on gate (hysteresis-based shutdown) ----
@@ -55,8 +61,14 @@ static const uint8_t  PERSIST_EVERY_N_CYCLES = 16;               // limit flash 
 static const float BAT_SHUTDOWN_THRESHOLD_V = 3.0f;    // near low-voltage knee
 static const float BAT_RECOVERY_THRESHOLD_V = 3.3f;    // modest hysteresis above shutdown
 
+// Battery divider correction. The nominal divider term (2020/510) over-reads by
+// ~1.30x on the measured hardware (3.98 V actual read as 5.17 V). This constant
+// brings the default reading in line; per-device fine-trim is applied on top via
+// State.batCalFactor (set with the `batcal <measuredV>` CLI command).
+static const float BAT_DIVIDER_CAL = 0.7698f;
+
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
 
 // Returns the wake interval for the current local time (day vs night).
@@ -102,7 +114,7 @@ static float readBatteryVoltageEarly() {
     digitalWrite(PIN_VBAT_EN, HIGH);   // disable divider
     pinMode(PIN_VBAT_EN, INPUT);
     float adc = acc / 8.0f;
-    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f);
+    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f) * BAT_DIVIDER_CAL;
 }
 
 // Device is stuck below BAT_SHUTDOWN_THRESHOLD_V — enter minimal dormancy.
@@ -304,15 +316,36 @@ void loop() {
     Bluefruit.Advertising.addData(BLE_GAP_AD_TYPE_SERVICE_DATA,
                                   svcData, (uint8_t)(2 + payloadLen));
     Bluefruit.ScanResponse.addName();
-    // Broadcast-only: the scale accepts connections ONLY during the post-boot
-    // pairing window, never mid-cycle. Non-connectable drops the per-advert RX
-    // window that listens for connection requests (less radio-on time) and
-    // removes the between-window attack surface. Scannable keeps the name in the
-    // scan response so the app can still identify the device.
-    Bluefruit.Advertising.setType(BLE_GAP_ADV_TYPE_NONCONNECTABLE_SCANNABLE_UNDIRECTED);
-    Bluefruit.Advertising.setInterval(160, 160);  // 100 ms (non-conn legacy min) -> ~3 events across the burst
+    // Connectable-scannable: the scale broadcasts its reading AND accepts a
+    // connection for a short window each cycle so the app can tare / calibrate
+    // / read diagnostics without anyone touching the device. We don't auto-
+    // restart on disconnect — loop() owns the advertise/sleep cadence.
+    Bluefruit.Advertising.restartOnDisconnect(false);
+    Bluefruit.Advertising.setType(BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED);
+    Bluefruit.Advertising.setInterval(160, 244);  // 100 ms / 152.5 ms
     Bluefruit.Advertising.start(0);
-    delay(ADVERT_DURATION_MS);
+
+    // Catch window: wait for a connection; if none, this is just a normal advert.
+    uint32_t winEnd = millis() + SERVICE_WINDOW_MS;
+    while ((int32_t)(winEnd - millis()) > 0 && !Bluefruit.connected()) {
+        delay(50);
+    }
+
+    // If the app connected, hold the session open (servicing tare/sample/name/
+    // time writes via the GATT callbacks) until it disconnects or the safety cap.
+    if (Bluefruit.connected()) {
+        uint32_t sessionEnd = millis() + SESSION_MAX_MS;
+        while (Bluefruit.connected() && (int32_t)(sessionEnd - millis()) > 0) {
+            delay(100);
+            if (OAConfig::takeDirty()) {
+                OAPersist::save(g_state);
+                resolveLocalName(name, sizeof(name));
+                Bluefruit.setName(name);
+            }
+        }
+        if (Bluefruit.connected()) Bluefruit.disconnect(Bluefruit.connHandle());
+    }
+
     Bluefruit.Advertising.stop();
 
     // 5. Persist packet counter every N cycles to limit flash wear
@@ -342,7 +375,8 @@ float readBatteryVoltage() {
     pinMode(PIN_VBAT_EN, INPUT);
     float adc = acc / 8.0f;
     // 12-bit ADC, 3.0 V ref, divider 1510k/510k -> Vbat = adc * 3.0 / 4095 * (1510+510)/510
-    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f);
+    // Corrected by BAT_DIVIDER_CAL (nominal term over-reads) and the per-device trim.
+    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f) * BAT_DIVIDER_CAL * g_state.batCalFactor;
 }
 
 // nRF52840 USB regulator status — VBUSDETECT bit reads 1 when 5V is applied to USB.

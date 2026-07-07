@@ -23,12 +23,14 @@ static const uint8_t PIN_HX711_DT  = D2;
 static const uint8_t PIN_HX711_SCK = D3;
 static const uint8_t PIN_VBAT_EN   = 14;
 
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0 };
+// Battery divider correction (see main.cpp). Nominal term over-reads ~1.30x.
+static const float BAT_DIVIDER_CAL = 0.7698f;
 
-// Under SoftDevice, the SAADC needs an explicit reference set after Bluefruit.begin()
-// or the first analogRead() can hang waiting for a sample that never completes.
-// Sample size kept small (8) with a small inter-sample delay to keep the radio happy.
-static float readBatteryVoltageCal() {
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
+
+// Battery voltage with the fixed divider correction but WITHOUT the per-device
+// trim (used by `batcal` to compute a fresh trim from a multimeter reading).
+static float readBatteryVoltageRawCal() {
     pinMode(PIN_VBAT_EN, OUTPUT);
     digitalWrite(PIN_VBAT_EN, LOW);
     delay(5);
@@ -43,7 +45,12 @@ static float readBatteryVoltageCal() {
     digitalWrite(PIN_VBAT_EN, HIGH);
     pinMode(PIN_VBAT_EN, INPUT);
     float adc = acc / 8.0f;
-    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f);
+    return adc * (3.0f / 4095.0f) * (2020.0f / 510.0f) * BAT_DIVIDER_CAL;
+}
+
+// Corrected battery voltage (divider correction + per-device trim).
+static float readBatteryVoltageCal() {
+    return readBatteryVoltageRawCal() * g_state.batCalFactor;
 }
 
 // With SoftDevice enabled, the TEMP peripheral is owned by the radio — direct
@@ -134,7 +141,7 @@ void enterCalibrationMode() {
 
     Serial.println();
     Serial.println(F("=== OpenApiary calibration mode ==="));
-    Serial.println(F("commands: tare | cal <kg> | show | save | ble [s] | reboot | exit"));
+    Serial.println(F("commands: tare | cal <kg> | batcal <V> | show | save | ble [s] | reboot | exit"));
 
     OAPersist::begin();
     if (OAPersist::load(g_state)) {
@@ -174,6 +181,18 @@ void enterCalibrationMode() {
             Serial.print(F("cal set: raw=")); Serial.print(raw);
             Serial.print(F(" net="));         Serial.print(net);
             Serial.print(F(" factor="));      Serial.println(factor, 4);
+        }
+        else if (line.startsWith("batcal ")) {
+            float measured = line.substring(7).toFloat();
+            if (measured <= 0.5f) { Serial.println(F("err: batcal needs your multimeter reading in volts, e.g. batcal 3.98")); continue; }
+            float rawV = readBatteryVoltageRawCal();
+            if (rawV <= 0.1f) { Serial.println(F("err: battery read failed")); continue; }
+            g_state.batCalFactor = measured / rawV;
+            OAPersist::save(g_state);
+            Serial.print(F("batcal set: raw=")); Serial.print(rawV, 3);
+            Serial.print(F(" measured=")); Serial.print(measured, 3);
+            Serial.print(F(" factor=")); Serial.print(g_state.batCalFactor, 4);
+            Serial.print(F(" -> now reads ")); Serial.println(readBatteryVoltageCal(), 3);
         }
         else if (line == "show") {
             long raw = hx711_read_raw_average(10);

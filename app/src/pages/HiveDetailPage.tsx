@@ -203,9 +203,9 @@ const HiveDetailPage: React.FC = () => {
     const deviceName = id.toUpperCase();
     setBusyAction('Checking stand accuracy');
     try {
-      const deviceId = await findDeviceId(deviceName, 8000);
+      const deviceId = await findDeviceId(deviceName, 65000);
       if (!deviceId) {
-        setToast('Scale not found. Reboot it, then run the check within the 60-second pairing window.');
+        setToast('Scale not found. Move closer and try again — it becomes reachable on its next heartbeat (up to ~60s).');
         return;
       }
       const d = await readDeviceDiagnostics(deviceId);
