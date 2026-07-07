@@ -4,13 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --env staging",
-    "deploy:staging": "wrangler deploy --env staging",
+    "dev": "wrangler dev --env production",
+    "deploy": "wrangler deploy --env production",
     "deploy:prod": "wrangler deploy --env production",
-    "db:migrate:local": "wrangler d1 execute oa-staging --local  --file=./migrations/0001.sql",
-    "db:migrate:staging": "wrangler d1 execute oa-staging --remote --file=./migrations/0001.sql",
+    "db:migrate:local": "wrangler d1 execute oa-prod --local  --file=./migrations/0001.sql",
     "db:migrate:prod": "wrangler d1 execute oa-prod    --remote --file=./migrations/0001.sql",
-    "tail:staging": "wrangler tail --env staging",
     "tail:prod": "wrangler tail --env production"
   },
   "dependencies": {

@@ -40,12 +40,6 @@ workers_dev = false
 pattern = "api.openapiary.co.uk"
 custom_domain = true
 
-# Legacy hostname kept as a fallback so older app builds keep working until
-# every device is updated to the new domain. Safe to remove later.
-[[env.production.routes]]
-pattern = "api.openapiaryproject.com"
-custom_domain = true
-
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "oa-prod"
