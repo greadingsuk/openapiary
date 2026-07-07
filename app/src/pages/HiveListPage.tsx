@@ -2,7 +2,7 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet, IonToast,
+  IonActionSheet, IonToast, IonSpinner,
 } from '@ionic/react';
 import {
   add, settingsOutline, cloudOfflineOutline, batteryHalfOutline,
@@ -161,9 +161,6 @@ const HiveListPage: React.FC = () => {
             <IonButton fill="clear" onClick={() => setSortOpen(true)} aria-label="Sort">
               <IonIcon slot="icon-only" icon={swapVerticalOutline} />
             </IonButton>
-            <IonButton fill="clear" onClick={() => { void runNearbySync(); }} aria-label="Sync nearby hives" disabled={syncingNearby}>
-              <IonIcon slot="icon-only" icon={syncOutline} />
-            </IonButton>
             <IonButton fill="clear" onClick={() => setShowApiaryMenu(true)} aria-label="Apiaries">
               <IonIcon slot="icon-only" icon={fileTrayFullOutline} />
             </IonButton>
@@ -200,6 +197,17 @@ const HiveListPage: React.FC = () => {
             ])}
           </div>
         )}
+
+        <IonFab slot="fixed" vertical="bottom" horizontal="start">
+          <IonFabButton
+            color="light"
+            aria-label="Scan paired hives"
+            disabled={syncingNearby}
+            onClick={() => { void runNearbySync(); }}
+          >
+            {syncingNearby ? <IonSpinner name="dots" /> : <IonIcon icon={syncOutline} />}
+          </IonFabButton>
+        </IonFab>
 
         <IonFab slot="fixed" vertical="bottom" horizontal="end">
           <IonFabButton routerLink="/add" aria-label="Scan for a hive">

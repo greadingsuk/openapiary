@@ -33,6 +33,7 @@
     "@types/react-router-dom": "^5.3.3",
     "chart.js": "^4.5.1",
     "chartjs-adapter-date-fns": "^3.0.0",
+    "chartjs-chart-financial": "^0.2.1",
     "date-fns": "^4.4.0",
     "fflate": "^0.8.3",
     "ionicons": "^7.4.0",

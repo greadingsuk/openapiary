@@ -5,7 +5,7 @@ import {
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
 import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline } from 'ionicons/icons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   getReadings,
@@ -24,6 +24,7 @@ import { findDeviceId, readDeviceDiagnostics } from '../lib/ble';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
+import WeightHistoryChart, { type WeightChartType } from '../components/WeightHistoryChart';
 import NewApiaryModal from '../components/NewApiaryModal';
 import TareWizard from '../components/TareWizard';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
@@ -36,6 +37,20 @@ const RANGE_MS: Record<'24h' | '7d' | '30d', number> = {
 };
 const EMPTY_KG = 18, FULL_KG = 60;
 const BAT_RECOVERY_THRESHOLD_V = 3.3;
+
+// Map RSSI (dBm) to a human-friendly signal rating.
+function signalRating(rssi?: number | null): { label: string; color: string } {
+  if (rssi == null) return { label: '--', color: 'var(--oa-ink-subtle)' };
+  if (rssi >= -60) return { label: 'Good', color: 'var(--ion-color-success)' };
+  if (rssi >= -80) return { label: 'Fair', color: 'var(--ion-color-warning)' };
+  return { label: 'Poor', color: 'var(--ion-color-danger)' };
+}
+
+function sameLocalDay(ts: number, dayStart: number): boolean {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() === dayStart;
+}
 
 const HiveDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -61,6 +76,8 @@ const HiveDetailPage: React.FC = () => {
   const [showTare, setShowTare] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
+  const [chartType, setChartType] = useState<WeightChartType>('line');
+  const [historyDay, setHistoryDay] = useState<number | 'all'>('all');
   const [toast, setToast] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [diagReport, setDiagReport] = useState<string | null>(null);
@@ -226,12 +243,28 @@ const HiveDetailPage: React.FC = () => {
     : null;
   const batteryTooLowForOta = latest?.battery_v != null && latest.battery_v < BAT_RECOVERY_THRESHOLD_V;
 
+  // Days present in the current range (local midnight keys, newest first).
+  const availableDays = useMemo(() => {
+    const set = new Set<number>();
+    for (const r of windowed) {
+      const d = new Date(r.ts);
+      d.setHours(0, 0, 0, 0);
+      set.add(d.getTime());
+    }
+    return [...set].sort((a, b) => b - a);
+  }, [windowed]);
+
+  // History respects the selected day filter.
+  const histSource = historyDay === 'all'
+    ? windowed
+    : windowed.filter((r) => sameLocalDay(r.ts, historyDay));
+
   // Collapse consecutive identical weights into one row so a settled scale
   // doesn't show 30+ duplicate lines. Each group carries all its timestamps
   // so selecting/deleting a group affects every underlying reading.
   interface HistGroup { weight: number | null; battery: number | null; lastTs: number; tsList: number[]; }
   const historyGroups: HistGroup[] = [];
-  for (const r of [...windowed].reverse()) {
+  for (const r of [...histSource].reverse()) {
     const w = r.weight_kg ?? null;
     const prev = historyGroups[historyGroups.length - 1];
     if (collapse && prev && prev.weight === w) {
@@ -250,10 +283,10 @@ const HiveDetailPage: React.FC = () => {
     });
   }
 
-  const allWindowedTs = windowed.map((r) => r.ts);
-  const allSelected = allWindowedTs.length > 0 && allWindowedTs.every((t) => selected.has(t));
+  const histTs = histSource.map((r) => r.ts);
+  const allSelected = histTs.length > 0 && histTs.every((t) => selected.has(t));
   function toggleSelectAll() {
-    setSelected(() => (allSelected ? new Set() : new Set(allWindowedTs)));
+    setSelected(() => (allSelected ? new Set() : new Set(histTs)));
   }
 
   return (
@@ -294,8 +327,12 @@ const HiveDetailPage: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3">
               <StatTile label="Battery" value={latest?.battery_v?.toFixed(2) ?? '--'} unit="V" />
-              <StatTile label="Signal" value={latest?.rssi ?? '--'} unit="dBm" />
-              <StatTile label="Device temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" />
+              <StatTile
+                label="Signal"
+                value={<span style={{ color: signalRating(latest?.rssi).color }}>{signalRating(latest?.rssi).label}</span>}
+                sub={latest?.rssi != null ? `${latest.rssi} dBm` : undefined}
+              />
+              <StatTile label="Scale temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" sub="electronics" />
               <StatTile label="Seen" value={relativeTime(latest?.ts, now)} />
             </div>
 
@@ -335,7 +372,13 @@ const HiveDetailPage: React.FC = () => {
                   </div>
                 ))}
               </div>
-              <WeightChart readings={windowed} metric="weight" />
+              <IonSegment value={chartType} onIonChange={(e) => setChartType((e.detail.value as WeightChartType) ?? 'line')} className="mb-3">
+                <IonSegmentButton value="line"><IonLabel>Line</IonLabel></IonSegmentButton>
+                <IonSegmentButton value="gain"><IonLabel>Gain</IonLabel></IonSegmentButton>
+                <IonSegmentButton value="candlestick"><IonLabel>Daily</IonLabel></IonSegmentButton>
+                <IonSegmentButton value="trend"><IonLabel>Trend</IonLabel></IonSegmentButton>
+              </IonSegment>
+              <WeightHistoryChart readings={windowed} chartType={chartType} />
             </div>
 
             <div className="oa-card p-4">
@@ -343,62 +386,100 @@ const HiveDetailPage: React.FC = () => {
               <WeightChart readings={windowed} metric="battery" height={120} />
             </div>
 
-            <button className="oa-card p-4 flex items-center justify-between" onClick={() => setHistoryOpen((o) => !o)}>
-              <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>History ({windowed.length})</span>
-              <IonIcon icon={historyOpen ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)' }} />
-            </button>
-            {historyOpen && (
-              <>
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-4">
-                    <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
-                      onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
-                      {selectMode ? 'Cancel' : 'Select'}
-                    </button>
-                    {selectMode && (
+            <div className="oa-card p-5">
+              <button className="w-full flex items-center justify-between" onClick={() => setHistoryOpen((o) => !o)}>
+                <span className="font-semibold text-base" style={{ color: 'var(--oa-ink)' }}>
+                  History ({histSource.length})
+                </span>
+                <IonIcon icon={historyOpen ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 22 }} />
+              </button>
+              {historyOpen && (
+                <div className="mt-4 flex flex-col gap-3">
+                  {/* Day filter */}
+                  {availableDays.length > 1 && (
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      <button
+                        className="text-xs px-3 py-1.5 rounded-full whitespace-nowrap"
+                        style={{
+                          background: historyDay === 'all' ? 'var(--oa-honey-500)' : 'var(--oa-surface-1)',
+                          color: historyDay === 'all' ? '#fff' : 'var(--oa-ink)',
+                          border: '1px solid var(--oa-glass-border)',
+                        }}
+                        onClick={() => { setHistoryDay('all'); setSelected(new Set()); }}
+                      >
+                        All ({windowed.length})
+                      </button>
+                      {availableDays.map((d) => (
+                        <button
+                          key={d}
+                          className="text-xs px-3 py-1.5 rounded-full whitespace-nowrap"
+                          style={{
+                            background: historyDay === d ? 'var(--oa-honey-500)' : 'var(--oa-surface-1)',
+                            color: historyDay === d ? '#fff' : 'var(--oa-ink)',
+                            border: '1px solid var(--oa-glass-border)',
+                          }}
+                          onClick={() => { setHistoryDay(d); setSelected(new Set()); }}
+                        >
+                          {new Date(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
                       <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
-                        onClick={toggleSelectAll}>
-                        {allSelected ? 'Clear all' : 'Select all'}
+                        onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
+                        {selectMode ? 'Cancel' : 'Select'}
+                      </button>
+                      {selectMode && (
+                        <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
+                          onClick={toggleSelectAll}>
+                          {allSelected ? 'Clear all' : 'Select all'}
+                        </button>
+                      )}
+                      <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
+                        {collapse ? 'Show all' : 'Group repeats'}
+                      </button>
+                    </div>
+                    {selectMode && (
+                      <button className="text-sm font-semibold" disabled={selected.size === 0}
+                        style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
+                        onClick={() => setConfirmDelete(true)}>
+                        Delete {selected.size || ''}
                       </button>
                     )}
-                    <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
-                      {collapse ? 'Show all' : 'Group repeats'}
-                    </button>
                   </div>
-                  {selectMode && (
-                    <button className="text-sm font-semibold" disabled={selected.size === 0}
-                      style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
-                      onClick={() => setConfirmDelete(true)}>
-                      Delete {selected.size || ''}
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-col gap-2">
-                  {historyGroups.slice(0, 200).map((g) => {
-                    const sel = g.tsList.some((t) => selected.has(t));
-                    return (
-                      <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
-                        onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
-                        {selectMode && (
-                          <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
-                            style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
-                        )}
-                        <div className="flex flex-col flex-1">
-                          <span className="oa-numeral font-semibold flex items-center gap-2" style={{ color: 'var(--oa-ink)' }}>
-                            {g.weight?.toFixed(2) ?? '--'} kg
-                            {g.tsList.length > 1 && (
-                              <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
-                            )}
-                          </span>
-                          <span className="text-xs oa-subtle">{new Date(g.lastTs).toLocaleString()}</span>
+
+                  <div className="flex flex-col gap-2" style={{ maxHeight: 380, overflowY: 'auto' }}>
+                    {historyGroups.length === 0 ? (
+                      <span className="text-sm oa-muted py-4 text-center">No readings for this day.</span>
+                    ) : historyGroups.slice(0, 300).map((g) => {
+                      const sel = g.tsList.some((t) => selected.has(t));
+                      return (
+                        <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
+                          onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
+                          {selectMode && (
+                            <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
+                              style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
+                          )}
+                          <div className="flex flex-col flex-1">
+                            <span className="oa-numeral font-semibold flex items-center gap-2" style={{ color: 'var(--oa-ink)' }}>
+                              {g.weight?.toFixed(2) ?? '--'} kg
+                              {g.tsList.length > 1 && (
+                                <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
+                              )}
+                            </span>
+                            <span className="text-xs oa-subtle">{new Date(g.lastTs).toLocaleString()}</span>
+                          </div>
+                          <span className="text-sm oa-muted">{g.battery?.toFixed(2) ?? '--'} V</span>
                         </div>
-                        <span className="text-sm oa-muted">{g.battery?.toFixed(2) ?? '--'} V</span>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </>
-            )}
+              )}
+            </div>
           </div>
         )}
 
