@@ -21,12 +21,14 @@ interface Props {
   isOpen: boolean;
   deviceName: string;   // e.g. "OA-ABCB"
   onClose: () => void;
+  /** Called with the verified post-tare weight so the hive page can refresh. */
+  onTared?: (weightKg: number) => void;
 }
 
 const NEAR_ZERO_KG = 0.2;
 const STABLE_SPREAD_G = 120;
 
-const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
+const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose, onTared }) => {
   const [step, setStep] = useState<Step>('prepare');
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [diag, setDiag] = useState<OADiagnostics | null>(null);
@@ -107,6 +109,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
       const d = await readDiagnosticsConnected(id);
       setDiag(d);
       setStep('verify');
+      onTared?.(d.weightKg);
     } catch (e) {
       dropConnection();
       setError(e instanceof Error ? e.message : String(e));

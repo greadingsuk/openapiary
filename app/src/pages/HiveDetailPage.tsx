@@ -241,6 +241,23 @@ const HiveDetailPage: React.FC = () => {
     }
   }
 
+  // After a successful tare, store the verified (zeroed) weight immediately so
+  // the page reflects it without waiting for the scale's next ~60s heartbeat.
+  // Carry over the last known battery/temp/signal so those tiles stay populated.
+  async function applyTaredReading(weightKg: number) {
+    const base = latest;
+    await insertReading({
+      hive_id: id,
+      ts: Date.now(),
+      weight_kg: weightKg,
+      battery_v: base?.battery_v,
+      temp_c: base?.temp_c,
+      rssi: base?.rssi,
+    });
+    await load();
+    setToast('Scale zeroed — reading updated.');
+  }
+
   const now = Date.now();
   const f = freshnessFor(latest?.ts ?? null, now);
   const rangeMs = range === 'custom' ? customDays * 86400_000 : RANGE_MS[range];
@@ -538,6 +555,7 @@ const HiveDetailPage: React.FC = () => {
         <TareWizard
           isOpen={showTare}
           deviceName={id.toUpperCase()}
+          onTared={(w) => { void applyTaredReading(w); }}
           onClose={() => { setShowTare(false); void load(); }}
         />
         <IonAlert isOpen={showRename} onDidDismiss={() => setShowRename(false)} header="Rename hive"
