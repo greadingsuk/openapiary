@@ -22,6 +22,7 @@ import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
 import { findDeviceId, readDeviceDiagnostics } from '../lib/ble';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
+import { ukDayWindow } from '../lib/sunWindow';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
 import WeightHistoryChart, { type WeightChartType } from '../components/WeightHistoryChart';
@@ -351,6 +352,10 @@ const HiveDetailPage: React.FC = () => {
               <StatTile label="Scale temp" value={latest?.temp_c?.toFixed(1) ?? '--'} unit="°C" sub="electronics" />
               <StatTile label="Seen" value={relativeTime(latest?.ts, now)} />
             </div>
+
+            <p className="text-xs oa-subtle px-1 -mt-1">
+              {(() => { const w = ukDayWindow(); return `Power saving: night mode ${w.sunset}–${w.sunrise} · reports every 5 min to save battery.`; })()}
+            </p>
 
             {batteryTooLowForOta && (
               <div className="oa-card p-4 flex items-start gap-3">

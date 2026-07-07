@@ -121,6 +121,7 @@ export const OA_CHAR_NAME      = '0a000001-0a51-4000-b000-000000000001'; // utf-
 export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 bytes: u32 epoch LE + i16 tzOffsetMin LE
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
+export const OA_CHAR_WINDOW    = '0a000005-0a51-4000-b000-000000000001'; // 4 bytes: u16 dayStartMin LE + u16 dayEndMin LE
 
 export interface OADiagnostics {
   weightKg: number;
@@ -169,6 +170,13 @@ function timeToDataView(epochSec: number, tzOffsetMin: number): DataView {
   return dv;
 }
 
+function windowToDataView(startMin: number, endMin: number): DataView {
+  const dv = new DataView(new ArrayBuffer(4));
+  dv.setUint16(0, startMin & 0xffff, true);
+  dv.setUint16(2, endMin & 0xffff, true);
+  return dv;
+}
+
 /**
  * Connect to a scale during its pairing window and push name and/or time.
  * Always disconnects afterwards. Throws a readable error if the window is
@@ -211,9 +219,14 @@ export async function configureDevice(
 }
 
 /**
- * Trigger an immediate tare on the scale during its pairing window.
+ * Trigger an immediate tare on the scale. While connected, opportunistically
+ * seed the clock and (if provided) the day/night power window, so a routine
+ * tare also keeps the scale's schedule up to date.
  */
-export async function tareDevice(deviceId: string): Promise<void> {
+export async function tareDevice(
+  deviceId: string,
+  cfg?: { tzOffsetMin?: number; dayStartMin?: number; dayEndMin?: number },
+): Promise<void> {
   await ensureInit();
   await withTimeout(
     BleClient.connect(deviceId, () => undefined),
@@ -226,6 +239,20 @@ export async function tareDevice(deviceId: string): Promise<void> {
       8000,
       'Write tare command',
     );
+    // Best-effort schedule sync in the same connection (never fails the tare).
+    try {
+      const tz = cfg?.tzOffsetMin ?? -new Date().getTimezoneOffset();
+      await BleClient.write(
+        deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME,
+        timeToDataView(Math.floor(Date.now() / 1000), tz),
+      );
+      if (cfg?.dayStartMin != null && cfg?.dayEndMin != null) {
+        await BleClient.write(
+          deviceId, OA_CONFIG_SERVICE, OA_CHAR_WINDOW,
+          windowToDataView(cfg.dayStartMin, cfg.dayEndMin),
+        );
+      }
+    } catch { /* schedule sync is non-fatal */ }
   } finally {
     try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
   }

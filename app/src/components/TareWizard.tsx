@@ -10,6 +10,7 @@ import {
 } from 'ionicons/icons';
 import { useEffect, useState } from 'react';
 import { findDeviceId, tareDevice, readDeviceDiagnostics, type OADiagnostics } from '../lib/ble';
+import { ukDayWindow } from '../lib/sunWindow';
 
 type Step = 'prepare' | 'connecting' | 'measure' | 'taring' | 'verify' | 'error';
 
@@ -62,7 +63,8 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
     setStep('taring');
     setError(null);
     try {
-      await tareDevice(deviceId);
+      const w = ukDayWindow();
+      await tareDevice(deviceId, { dayStartMin: w.startMin, dayEndMin: w.endMin });
       // Give the firmware a moment, then re-read to confirm.
       const d = await readDeviceDiagnostics(deviceId);
       setDiag(d);

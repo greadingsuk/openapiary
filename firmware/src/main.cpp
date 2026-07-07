@@ -68,14 +68,18 @@ static const float BAT_RECOVERY_THRESHOLD_V = 3.3f;    // modest hysteresis abov
 static const float BAT_DIVIDER_CAL = 0.7698f;
 
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 360, 1320 };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
 
 // Returns the wake interval for the current local time (day vs night).
 static uint32_t nextWakeIntervalMs() {
-    int h = OAConfig::localHour();
-    if (h < 0) return WAKE_DAY_MS;            // time unknown → assume daytime
-    return (h >= 6 && h < 22) ? WAKE_DAY_MS : WAKE_NIGHT_MS;
+    int m = OAConfig::localMinuteOfDay();
+    if (m < 0) return WAKE_DAY_MS;            // time unknown → assume daytime
+    int start = g_state.dayStartMin;
+    int end   = g_state.dayEndMin;
+    bool day = (start <= end) ? (m >= start && m < end)
+                              : (m >= start || m < end);  // window wrapping midnight
+    return day ? WAKE_DAY_MS : WAKE_NIGHT_MS;
 }
 
 // Resolve the BLE local name: persisted friendly name if set, else OA-XXXX.

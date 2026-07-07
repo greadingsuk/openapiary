@@ -35,12 +35,16 @@ static uint8_t UUID_TARE[16] = {
 static uint8_t UUID_SAMPLE[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x04,0x00,0x00,0x0a
 };
+static uint8_t UUID_WINDOW[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x05,0x00,0x00,0x0a
+};
 
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
 inline BLECharacteristic& timeChar() { static BLECharacteristic c(UUID_TIME);    return c; }
 inline BLECharacteristic& tareChar() { static BLECharacteristic c(UUID_TARE);    return c; }
 inline BLECharacteristic& sampleChar(){ static BLECharacteristic c(UUID_SAMPLE);  return c; }
+inline BLECharacteristic& windowChar(){ static BLECharacteristic c(UUID_WINDOW);  return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -63,6 +67,15 @@ inline int localHour() {
     int32_t tz = g_state ? g_state->tzOffsetMin : 0;
     int32_t local = (int32_t)e + tz * 60;
     return (int)(((local / 3600) % 24 + 24) % 24);
+}
+
+// Local minute-of-day 0-1439 using the persisted tz offset, or -1 if unknown.
+inline int localMinuteOfDay() {
+    uint32_t e = currentEpoch();
+    if (e == 0) return -1;
+    int32_t tz = g_state ? g_state->tzOffsetMin : 0;
+    int32_t local = (int32_t)e + tz * 60;
+    return (int)(((local / 60) % 1440 + 1440) % 1440);
 }
 
 // Name write: copy up to 16 bytes, NUL-terminate, mark dirty for persistence.
@@ -137,6 +150,19 @@ inline void onSampleWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*
     (void)chr;
 }
 
+// Window write: 4 bytes = u16 dayStartMin (LE) + u16 dayEndMin (LE), local minutes.
+inline void onWindowWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (!g_state || len < 4) return;
+    uint16_t s = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+    uint16_t e = (uint16_t)data[2] | ((uint16_t)data[3] << 8);
+    if (s <= 1440 && e <= 1440) {
+        g_state->dayStartMin = (int16_t)s;
+        g_state->dayEndMin   = (int16_t)e;
+        g_dirty = true;
+    }
+    (void)chr;
+}
+
 // Register the service + characteristics. Call after Bluefruit.begin().
 inline void begin(OAPersist::State* state) {
     g_state = state;
@@ -168,6 +194,12 @@ inline void begin(OAPersist::State* state) {
     sampleChar().write(init, sizeof(init));
     sampleChar().setWriteCallback(onSampleWrite);
     sampleChar().begin();
+
+    windowChar().setProperties(CHR_PROPS_WRITE);
+    windowChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    windowChar().setMaxLen(4);
+    windowChar().setWriteCallback(onWindowWrite);
+    windowChar().begin();
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.
