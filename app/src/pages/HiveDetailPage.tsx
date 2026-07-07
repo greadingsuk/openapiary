@@ -52,6 +52,17 @@ function sameLocalDay(ts: number, dayStart: number): boolean {
   return d.getTime() === dayStart;
 }
 
+// State-of-charge from 1S LiPo voltage. Mirrors firmware batteryPctFromVoltage()
+// so the app and device agree once the battery voltage is calibrated.
+function batteryPctFromVoltage(v?: number | null): number | null {
+  if (v == null) return null;
+  if (v >= 4.2) return 100;
+  if (v >= 3.9) return Math.round(60 + (v - 3.9) * (40 / 0.3));
+  if (v >= 3.7) return Math.round(25 + (v - 3.7) * (35 / 0.2));
+  if (v >= 3.3) return Math.round((v - 3.3) * (25 / 0.4));
+  return 0;
+}
+
 const HiveDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const router = useIonRouter();
@@ -326,7 +337,12 @@ const HiveDetailPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <StatTile label="Battery" value={latest?.battery_v?.toFixed(2) ?? '--'} unit="V" />
+              <StatTile
+                label="Battery"
+                value={latest?.battery_v?.toFixed(2) ?? '--'}
+                unit="V"
+                sub={batteryPctFromVoltage(latest?.battery_v) != null ? `~${batteryPctFromVoltage(latest?.battery_v)}%` : undefined}
+              />
               <StatTile
                 label="Signal"
                 value={<span style={{ color: signalRating(latest?.rssi).color }}>{signalRating(latest?.rssi).label}</span>}
