@@ -157,24 +157,38 @@ const FirmwarePage: React.FC = () => {
 
               {!busy ? (
                 <>
-                  <ol className="text-xs oa-muted flex flex-col gap-1 pl-4 list-decimal" style={{ marginTop: 4 }}>
-                    <li>Stand within a few metres of the scale and keep this screen open.</li>
-                    <li>Make sure the battery is above {BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V — leave it in sunlight first if it's low.</li>
-                    <li>Tap “Update over Bluetooth”. The scale picks it up on its next heartbeat (up to ~60s) — no button press needed.</li>
-                    <li>Keep the app in the foreground until it finishes (a minute or two).</li>
-                    <li>If it drops out, the scale safely waits in update mode — just tap update again.</li>
-                  </ol>
-                  <IonButton expand="block" onClick={run} className="ion-margin-top" disabled={!canStartUpdate}>
+                  <div
+                    className="p-4 rounded-xl flex flex-col gap-2"
+                    style={{
+                      background: 'var(--oa-honey-50, #fdf6e3)',
+                      border: '2px solid var(--oa-honey-400)',
+                      marginTop: 6,
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <IonIcon icon={warningOutline} style={{ color: 'var(--oa-honey-700)', fontSize: 22 }} />
+                      <span className="font-bold text-base" style={{ color: 'var(--oa-ink)' }}>
+                        Read this before you tap update
+                      </span>
+                    </div>
+                    <ol className="text-sm flex flex-col gap-2 pl-5 list-decimal" style={{ color: 'var(--oa-ink)' }}>
+                      <li><strong>Stand right next to the scale</strong> (within arm's reach) and stay there for the whole update.</li>
+                      <li><strong>Keep this screen open</strong> — don't lock the phone or switch apps until it says it's done.</li>
+                      <li>The scale only wakes to listen <strong>once a minute</strong>, so it can take a minute or two to begin — this is normal, please wait.</li>
+                      <li>If it drops out, <strong>the scale can't be damaged</strong> — it waits safely in update mode. Just tap update again.</li>
+                    </ol>
+                  </div>
+                  <IonButton expand="block" onClick={run} className="ion-margin-top" disabled={!canStartUpdate} style={{ '--padding-top': '18px', '--padding-bottom': '18px' } as React.CSSProperties}>
                     <IonIcon slot="start" icon={cloudDownloadOutline} /> Update over Bluetooth
                   </IonButton>
                 </>
               ) : (
                 <div className="pt-2">
                   <IonProgressBar value={pct! / 100} />
-                  <p className="text-xs oa-subtle mt-1 text-center">{phase} {pct! > 0 ? `${pct}%` : ''}</p>
-                  <p className="text-xs oa-subtle mt-1 text-center">
-                    Keep the app open and the scale nearby. If it disconnects, it stays in update
-                    mode and the app will retry automatically.
+                  <p className="text-sm font-semibold mt-2 text-center" style={{ color: 'var(--oa-ink)' }}>{phase} {pct! > 0 ? `${pct}%` : ''}</p>
+                  <p className="text-sm mt-1 text-center" style={{ color: 'var(--oa-ink)' }}>
+                    <strong>Keep the phone right next to the scale and this screen open.</strong> Catching
+                    the scale can take a minute or two — please don't lock the phone or leave the app.
                   </p>
                 </div>
               )}
@@ -194,7 +208,15 @@ const FirmwarePage: React.FC = () => {
             </p>
           </div>
         </div>
-        <IonToast isOpen={!!toast} message={toast ?? ''} duration={4500} onDidDismiss={() => setToast(null)} />
+        <IonToast
+          isOpen={!!toast}
+          message={toast ?? ''}
+          duration={12000}
+          position="middle"
+          buttons={[{ text: 'OK', role: 'cancel' }]}
+          cssClass="oa-firmware-toast"
+          onDidDismiss={() => setToast(null)}
+        />
       </IonContent>
     </IonPage>
   );

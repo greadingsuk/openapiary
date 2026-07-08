@@ -21,7 +21,7 @@ import { unzipSync } from 'fflate';
 import { loadSettings } from './settings';
 import { getLatestFirmware, downloadFirmwareBytes, type FirmwareInfo } from './api';
 import { findDeviceId } from './ble';
-import { triggerButtonlessDfu, findBootloader, runSecureDfu, type DfuProgress } from './dfu';
+import { triggerButtonlessDfu, DfuTriggerError, findBootloader, runSecureDfu, type DfuProgress } from './dfu';
 
 export type { FirmwareInfo } from './api';
 export type { DfuProgress } from './dfu';
@@ -117,15 +117,42 @@ export async function updateFirmware(
   await verifyPackage(zip, latest);
   const pkg = unpackDfuZip(zip);
 
-  // 2. Find the scale on its next heartbeat and trigger buttonless DFU. No
-  //    button press: the scale is connectable for a few seconds each heartbeat.
+  // 2. Find the scale on a heartbeat and trigger buttonless DFU. The scale is
+  //    only connectable for a few seconds per heartbeat, so we re-scan and
+  //    retry across windows: catch the scale awake, connect immediately, and if
+  //    we miss the window, wait for the next heartbeat and try again.
   onProgress(0, 'Waiting for scale');
-  const deviceId = await findDeviceId(deviceName, 65000);
-  if (!deviceId) {
-    throw new Error('Scale not found. Keep the phone close and the scale powered — it becomes reachable on its next heartbeat (up to ~60s).');
+  const deadline = Date.now() + 120000;
+  let triggered = false;
+  let heardScale = false;
+  let lastErr: unknown;
+
+  while (Date.now() < deadline && !triggered) {
+    const deviceId = await findDeviceId(deviceName, Math.min(65000, deadline - Date.now()));
+    if (!deviceId) continue; // not heard this pass — keep listening until the deadline
+    heardScale = true;
+    try {
+      onProgress(0, 'Entering update mode');
+      await triggerButtonlessDfu(deviceId);
+      triggered = true;
+    } catch (e) {
+      lastErr = e;
+      // Likely missed the ~6s connectable window (or a transient discovery
+      // race). Wait for the next heartbeat and try again.
+      onProgress(0, 'Waiting for scale');
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
-  onProgress(0, 'Entering update mode');
-  await triggerButtonlessDfu(deviceId);
+
+  if (!triggered) {
+    if (!heardScale) {
+      throw new Error('Scale not found. Keep the phone within a metre of the scale and make sure it has power — it becomes reachable on each heartbeat (about every 60s).');
+    }
+    if (lastErr instanceof DfuTriggerError && lastErr.code === 'service-missing') {
+      throw new Error("Your phone can't see the scale's wireless-update service. Turn the phone's Bluetooth fully off and on (or restart the phone), then try again with the scale close.");
+    }
+    throw new Error('Could not start the update — the scale kept dropping the connection. Move the phone right next to the scale, keep the app open, and try again.');
+  }
 
   // 3. Reconnect to the bootloader and transfer.
   const bootloaderId = await findBootloader(20000);
