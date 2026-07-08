@@ -122,6 +122,7 @@ export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 by
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
 export const OA_CHAR_WINDOW    = '0a000005-0a51-4000-b000-000000000001'; // 4 bytes: u16 dayStartMin LE + u16 dayEndMin LE
+export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 2 bytes: u16 known weight grams LE -> recompute factor
 
 export interface OADiagnostics {
   weightKg: number;
@@ -263,6 +264,18 @@ export async function pushScheduleConnected(
       );
     }
   } catch { /* schedule sync is non-fatal */ }
+}
+
+/** Push a new scale factor (computed app-side from a known-weight delta) to an
+ * already-open connection. Works for both empty-bench and hive-in-field flows. */
+export async function setFactorConnected(deviceId: string, factor: number): Promise<void> {
+  const dv = new DataView(new ArrayBuffer(4));
+  dv.setFloat32(0, factor, true); // little-endian to match firmware memcpy
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_CALIB, dv),
+    8000,
+    'Write calibration',
+  );
 }
 
 /** Request + read a diagnostics sample on an already-open connection. */

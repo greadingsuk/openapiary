@@ -38,6 +38,9 @@ static uint8_t UUID_SAMPLE[16] = {
 static uint8_t UUID_WINDOW[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x05,0x00,0x00,0x0a
 };
+static uint8_t UUID_CALIB[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x06,0x00,0x00,0x0a
+};
 
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
@@ -45,6 +48,7 @@ inline BLECharacteristic& timeChar() { static BLECharacteristic c(UUID_TIME);   
 inline BLECharacteristic& tareChar() { static BLECharacteristic c(UUID_TARE);    return c; }
 inline BLECharacteristic& sampleChar(){ static BLECharacteristic c(UUID_SAMPLE);  return c; }
 inline BLECharacteristic& windowChar(){ static BLECharacteristic c(UUID_WINDOW);  return c; }
+inline BLECharacteristic& calibChar(){ static BLECharacteristic c(UUID_CALIB);   return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -163,6 +167,22 @@ inline void onWindowWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* da
     (void)chr;
 }
 
+// Calibrate write: 4 bytes = IEEE-754 float (LE) = new scale factor. The app
+// computes it from a known-weight delta (factor = raw_delta / known_kg), which
+// works whether the scale is empty or already has a hive on it. The tare offset
+// is left untouched so an in-field hive keeps its baseline.
+inline void onCalibrateWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (!g_state || len < 4) return;
+    float f;
+    memcpy(&f, data, 4);
+    if (isfinite(f) && fabsf(f) > 1.0f) {
+        g_state->calFactor = f;
+        hx711_set_scale(f);
+        g_dirty = true;
+    }
+    (void)chr;
+}
+
 // Register the service + characteristics. Call after Bluefruit.begin().
 inline void begin(OAPersist::State* state) {
     g_state = state;
@@ -200,6 +220,12 @@ inline void begin(OAPersist::State* state) {
     windowChar().setMaxLen(4);
     windowChar().setWriteCallback(onWindowWrite);
     windowChar().begin();
+
+    calibChar().setProperties(CHR_PROPS_WRITE);
+    calibChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    calibChar().setMaxLen(4);
+    calibChar().setWriteCallback(onCalibrateWrite);
+    calibChar().begin();
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.

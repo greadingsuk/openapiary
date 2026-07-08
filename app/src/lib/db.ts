@@ -181,6 +181,27 @@ export async function insertReading(r: Reading): Promise<void> {
   } else if (await isSuppressedInDb(r.hive_id, r.ts)) {
     return;
   }
+
+  // De-duplicate repeated adverts: the scale re-broadcasts the same payload
+  // (same packet_id) many times per cycle. Skip if the newest stored reading
+  // for this hive already carries this packet_id.
+  if (r.packet_id != null) {
+    if (useMemory) {
+      let newest: (Reading & { synced: number }) | undefined;
+      for (const m of memReadings) {
+        if (m.hive_id === r.hive_id && (!newest || m.ts > newest.ts)) newest = m;
+      }
+      if (newest && newest.packet_id === r.packet_id) return;
+    } else {
+      const res = await db!.query(
+        'SELECT packet_id FROM readings WHERE hive_id = ? ORDER BY ts DESC LIMIT 1',
+        [r.hive_id],
+      );
+      const lastPid = (res.values?.[0] as { packet_id: number | null } | undefined)?.packet_id;
+      if (lastPid != null && lastPid === r.packet_id) return;
+    }
+  }
+
   if (useMemory) {
     memReadings.push({ ...r, synced: 0 });
     return;

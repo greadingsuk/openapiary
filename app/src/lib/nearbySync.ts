@@ -1,5 +1,6 @@
 import { ensureBleReady, startScan, stopScan } from './ble';
 import { insertReading, listHivesLocal, upsertHive } from './db';
+import { recordDeviceMeta } from './deviceMeta';
 import { syncNow, type SyncResult } from './sync';
 
 export interface NearbySyncResult {
@@ -38,6 +39,7 @@ export async function syncNearbyKnownHives(scanMs = 65000): Promise<NearbySyncRe
       if (!known.has(hiveId)) return;
       heardIds.add(hiveId);
       await upsertHive({ id: hiveId, name: a.deviceName, created_at: Date.now() });
+      if (a.fwVersion) await recordDeviceMeta(hiveId, { fw: a.fwVersion });
       await insertReading({
         hive_id: hiveId,
         ts: a.ts,

@@ -9,6 +9,7 @@ import {
 import { useState } from 'react';
 import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
 import { listHives } from '../lib/api';
+import { loadDeviceMeta, type DeviceMetaStore } from '../lib/deviceMeta';
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
@@ -19,15 +20,18 @@ const FleetPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [hives, setHives] = useState<Hive[]>([]);
   const [latest, setLatest] = useState<Map<string, Reading>>(new Map());
+  const [meta, setMeta] = useState<DeviceMetaStore>({});
 
   async function load() {
     // 1) Local cache first — instant, offline-safe.
-    const [localHives, localLatest] = await Promise.all([
+    const [localHives, localLatest, dm] = await Promise.all([
       listHivesLocal(),
       latestReadingPerHive(),
+      loadDeviceMeta(),
     ]);
     setHives(localHives);
     setLatest(localLatest);
+    setMeta(dm);
     setLoading(false);
 
     // 2) Enrich names from cloud when possible (non-fatal).
@@ -89,7 +93,7 @@ const FleetPage: React.FC = () => {
             <h2 className="oa-section px-4 pt-2 pb-1 text-sm oa-subtle">
               Recent activity
             </h2>
-            <div className="flex flex-col gap-3 px-4 pb-6">
+            <div className="flex flex-col gap-3 px-4 pb-2">
               {recent.map(([id, r]) => {
                 const h = hives.find((x) => x.id === id);
                 const f = freshnessFor(r.ts, now);
@@ -102,12 +106,31 @@ const FleetPage: React.FC = () => {
                       <StatusDot freshness={f} label={`${relativeTime(r.ts, now)}`} />
                     </div>
                     <span className="oa-numeral text-xl font-semibold" style={{ color: 'var(--oa-honey-700)' }}>
-                      {r.weight_kg != null ? r.weight_kg.toFixed(1) : '--'}
+                      {r.weight_kg != null ? r.weight_kg.toFixed(2) : '--'}
                       <span className="text-sm oa-muted"> kg</span>
                     </span>
                   </div>
                 );
               })}
+            </div>
+
+            <h2 className="oa-section px-4 pt-2 pb-1 text-sm oa-subtle">
+              Devices &amp; firmware
+            </h2>
+            <div className="flex flex-col gap-2 px-4 pb-6">
+              {[...hives].sort((a, b) => a.name.localeCompare(b.name)).map((h) => {
+                const fw = meta[h.id.toLowerCase()]?.fw;
+                return (
+                  <div key={h.id} className="oa-card p-3 flex items-center justify-between">
+                    <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
+                    <span className="oa-mono text-xs px-2 py-1 rounded-full"
+                      style={{ background: 'var(--oa-surface-1)', color: fw ? 'var(--oa-ink)' : 'var(--oa-ink-subtle)', border: '1px solid var(--oa-glass-border)' }}>
+                      {fw ?? 'unknown'}
+                    </span>
+                  </div>
+                );
+              })}
+              <p className="oa-subtle text-xs px-1 pt-1">Firmware shows after the phone hears each scale (tap Scan on the Hives tab).</p>
             </div>
           </>
         )}

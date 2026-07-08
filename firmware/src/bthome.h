@@ -16,6 +16,7 @@ static const uint8_t BTHOME_OBJ_WEIGHT_KG  = 0x06;  // uint16 LE, factor 0.01
 static const uint8_t BTHOME_OBJ_VOLTAGE_V  = 0x0C;  // uint16 LE, factor 0.001
 static const uint8_t BTHOME_OBJ_POWER_BIN  = 0x10;  // uint8 0/1 (we use 1 = USB/solar present = "charging")
 static const uint8_t BTHOME_OBJ_COUNT_U16  = 0x3D;  // uint16 LE (we use for boot count)
+static const uint8_t BTHOME_OBJ_FW_VER_U24 = 0xF2;  // uint24 LE, bytes = [patch, minor, major]
 
 // Device info byte: v2 (bits 5-7 = 010), unencrypted (bit 0 = 0), no trigger (bit 2 = 0)
 //   0b 010 0 0 0 0 0 = 0x40
@@ -31,7 +32,10 @@ inline size_t bthome_build_payload(uint8_t* out, size_t outCap,
                                    float tempC = NAN,
                                    int batteryPct = -1,        // -1 = omit
                                    int charging = -1,          // -1 = omit, 0 = no, 1 = yes
-                                   int bootCount = -1) {       // -1 = omit
+                                   int bootCount = -1,         // -1 = omit
+                                   int fwMajor = -1,           // -1 = omit firmware version
+                                   int fwMinor = 0,
+                                   int fwPatch = 0) {
     if (!out || outCap < 12) return 0;
     size_t i = 0;
 
@@ -80,6 +84,16 @@ inline size_t bthome_build_payload(uint8_t* out, size_t outCap,
         out[i++] = BTHOME_OBJ_COUNT_U16;
         out[i++] = (uint8_t)(bc & 0xFF);
         out[i++] = (uint8_t)(bc >> 8);
+    }
+
+    // 0xF2 firmware version (uint24 LE) - bytes are [patch, minor, major].
+    // Must stay last: object ids are broadcast in ascending order and 0xF2 is
+    // the highest id we emit.
+    if (fwMajor >= 0 && (i + 4 <= outCap)) {
+        out[i++] = BTHOME_OBJ_FW_VER_U24;
+        out[i++] = (uint8_t)constrain((long)fwPatch, 0L, 255L);
+        out[i++] = (uint8_t)constrain((long)fwMinor, 0L, 255L);
+        out[i++] = (uint8_t)constrain((long)fwMajor, 0L, 255L);
     }
 
     return i;

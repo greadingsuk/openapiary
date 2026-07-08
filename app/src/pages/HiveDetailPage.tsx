@@ -4,7 +4,7 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, warningOutline, scaleOutline } from 'ionicons/icons';
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -20,7 +20,6 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
-import { findDeviceId, readDeviceDiagnostics } from '../lib/ble';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { ukDayWindow } from '../lib/sunWindow';
 import { patchHive } from '../lib/api';
@@ -28,6 +27,7 @@ import WeightChart from '../components/WeightChart';
 import WeightHistoryChart, { type WeightChartType } from '../components/WeightHistoryChart';
 import NewApiaryModal from '../components/NewApiaryModal';
 import TareWizard from '../components/TareWizard';
+import CalibrationWizard from '../components/CalibrationWizard';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
 type Range = '24h' | '7d' | '30d' | 'custom';
@@ -86,13 +86,12 @@ const HiveDetailPage: React.FC = () => {
   const [showMove, setShowMove] = useState(false);
   const [showNewApiary, setShowNewApiary] = useState(false);
   const [showTare, setShowTare] = useState(false);
+  const [showCalibrate, setShowCalibrate] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
   const [chartType, setChartType] = useState<WeightChartType>('line');
   const [historyDay, setHistoryDay] = useState<number | 'all'>('all');
   const [toast, setToast] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [diagReport, setDiagReport] = useState<string | null>(null);
 
   async function load() {
     const [hives, last, recent, ap] = await Promise.all([
@@ -211,36 +210,6 @@ const HiveDetailPage: React.FC = () => {
     }
   }
 
-  async function runAccuracyCheck() {
-    const deviceName = id.toUpperCase();
-    setBusyAction('Checking stand accuracy');
-    try {
-      const deviceId = await findDeviceId(deviceName, 65000);
-      if (!deviceId) {
-        setToast('Scale not found. Move closer and try again — it becomes reachable on its next heartbeat (up to ~60s).');
-        return;
-      }
-      const d = await readDeviceDiagnostics(deviceId);
-      const stable = d.spreadG <= 120;
-      const nearZero = Math.abs(d.weightKg) <= 0.2;
-      const verdict = stable && nearZero
-        ? 'Result: stable and near zero (looks good).'
-        : stable
-          ? 'Result: stable but not near zero (tare recommended).'
-          : 'Result: noisy reading (check stand leveling/load-cell wiring).';
-      setDiagReport(
-        `Weight ${d.weightKg.toFixed(2)} kg\n` +
-        `Spread ${d.spreadG} g\n` +
-        `Raw ${d.rawCounts}\n\n` +
-        `${verdict}`,
-      );
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   // After a successful tare, store the verified (zeroed) weight immediately so
   // the page reflects it without waiting for the scale's next ~60s heartbeat.
   // Carry over the last known battery/temp/signal so those tiles stay populated.
@@ -347,7 +316,7 @@ const HiveDetailPage: React.FC = () => {
               <StatusDot freshness={f} />
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="oa-numeral font-bold" style={{ fontSize: 56, lineHeight: 1, color: 'var(--oa-ink)' }}>
-                  {latest?.weight_kg != null ? latest.weight_kg.toFixed(1) : '--'}
+                  {latest?.weight_kg != null ? latest.weight_kg.toFixed(2) : '--'}
                 </span>
                 <span className="text-lg oa-muted">kg</span>
               </div>
@@ -526,7 +495,7 @@ const HiveDetailPage: React.FC = () => {
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
             { text: 'Tare stand', icon: checkmarkCircle, handler: () => setShowTare(true) },
-            { text: busyAction ? 'Stand accuracy check (busy)' : 'Stand accuracy check', icon: warningOutline, handler: () => { void runAccuracyCheck(); } },
+            { text: 'Calibrate / accuracy check', icon: scaleOutline, handler: () => setShowCalibrate(true) },
             { text: 'Delete all readings', role: 'destructive', handler: () => setConfirmDeleteAll(true) },
             {
               text: batteryTooLowForOta ? 'Firmware update (battery low)' : 'Firmware update',
@@ -558,18 +527,16 @@ const HiveDetailPage: React.FC = () => {
           onTared={(w) => { void applyTaredReading(w); }}
           onClose={() => { setShowTare(false); void load(); }}
         />
+        <CalibrationWizard
+          isOpen={showCalibrate}
+          deviceName={id.toUpperCase()}
+          onClose={() => { setShowCalibrate(false); void load(); }}
+        />
         <IonAlert isOpen={showRename} onDidDismiss={() => setShowRename(false)} header="Rename hive"
           message="Up to 16 characters. Updates here, in the cloud, and on the scale if in range."
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Save', handler: (d) => { void doRename(d.name); } }]} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
-        <IonAlert
-          isOpen={!!diagReport}
-          onDidDismiss={() => setDiagReport(null)}
-          header="Stand accuracy"
-          message={diagReport ?? ''}
-          buttons={[{ text: 'OK', role: 'cancel' }]}
-        />
         <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
           message="Number of days to show (1\u2013730)."
           inputs={[{ name: 'days', type: 'number', value: customDays, min: 1, max: 730 }]}
