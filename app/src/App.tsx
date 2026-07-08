@@ -85,6 +85,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (auth.authed) {
       startAutoSync();
+      // Prompt for Bluetooth permission right after sign-in (native only) so the
+      // user isn't sent to "Add a hive" just to grant it. Non-fatal if declined
+      // or BT is off — the scan flows re-check later.
+      if (Capacitor.isNativePlatform()) {
+        void import('./lib/ble').then(({ ensureBleReady }) => ensureBleReady().catch(() => undefined));
+      }
       return () => stopAutoSync();
     }
   }, [auth.authed]);

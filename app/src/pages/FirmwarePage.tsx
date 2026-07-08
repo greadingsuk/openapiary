@@ -132,8 +132,8 @@ const FirmwarePage: React.FC = () => {
               {!busy ? (
                 <>
                   <IonNote className="text-xs" style={{ color: 'var(--oa-ink)' }}>
-                    Before you start: press the scale's button to reboot it. That opens a 60-second
-                    window for the update. Keep the app open and the scale nearby.
+                    Keep the app open and the scale nearby. The update begins on the scale's next
+                    heartbeat (up to ~60s) — no need to touch the scale.
                   </IonNote>
                   <IonButton expand="block" onClick={run} className="ion-margin-top" disabled={!canStartUpdate}>
                     <IonIcon slot="start" icon={cloudDownloadOutline} /> Update over Bluetooth

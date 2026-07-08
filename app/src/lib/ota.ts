@@ -116,11 +116,12 @@ export async function updateFirmware(
   await verifyPackage(zip, latest);
   const pkg = unpackDfuZip(zip);
 
-  // 2. Find the scale in its pairing window and trigger buttonless DFU.
-  onProgress(0, 'Connecting');
-  const deviceId = await findDeviceId(deviceName, 8000);
+  // 2. Find the scale on its next heartbeat and trigger buttonless DFU. No
+  //    button press: the scale is connectable for a few seconds each heartbeat.
+  onProgress(0, 'Waiting for scale');
+  const deviceId = await findDeviceId(deviceName, 65000);
   if (!deviceId) {
-    throw new Error('Scale not found. Press its button to reboot it, then try again within a minute.');
+    throw new Error('Scale not found. Keep the phone close and the scale powered — it becomes reachable on its next heartbeat (up to ~60s).');
   }
   onProgress(0, 'Entering update mode');
   await triggerButtonlessDfu(deviceId);
