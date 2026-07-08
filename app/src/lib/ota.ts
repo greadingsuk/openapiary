@@ -26,9 +26,10 @@ import { triggerButtonlessDfu, findBootloader, runSecureDfu, type DfuProgress } 
 export type { FirmwareInfo } from './api';
 export type { DfuProgress } from './dfu';
 
-// Fallback "installed" version shown before we've heard a firmware-version advert
-// from the scale. Keep in sync with firmware/src/version.h (OA_FW_VERSION_STRING).
-export const CURRENT_BUILD = 'v1.0.3';
+// Reference "current" build for this app release. Keep in sync with
+// firmware/src/version.h (OA_FW_VERSION_STRING). No longer used as a fallback
+// "installed" version — the Firmware screen only trusts the scale's advert.
+export const CURRENT_BUILD = 'v1.0.4';
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Copy into a fresh ArrayBuffer-backed view to satisfy BufferSource typing.

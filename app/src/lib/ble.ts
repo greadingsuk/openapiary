@@ -121,7 +121,6 @@ export const OA_CHAR_NAME      = '0a000001-0a51-4000-b000-000000000001'; // utf-
 export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 bytes: u32 epoch LE + i16 tzOffsetMin LE
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
-export const OA_CHAR_WINDOW    = '0a000005-0a51-4000-b000-000000000001'; // 4 bytes: u16 dayStartMin LE + u16 dayEndMin LE
 export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 2 bytes: u16 known weight grams LE -> recompute factor
 
 export interface OADiagnostics {
@@ -168,13 +167,6 @@ function timeToDataView(epochSec: number, tzOffsetMin: number): DataView {
   dv.setUint32(0, epochSec >>> 0, true);   // little-endian
   dv.setInt16(4, tzOffsetMin, true);
   // bytes 6-7 reserved / zero
-  return dv;
-}
-
-function windowToDataView(startMin: number, endMin: number): DataView {
-  const dv = new DataView(new ArrayBuffer(4));
-  dv.setUint16(0, startMin & 0xffff, true);
-  dv.setUint16(2, endMin & 0xffff, true);
   return dv;
 }
 
@@ -246,26 +238,6 @@ export async function tareConnected(deviceId: string): Promise<void> {
   );
 }
 
-/** Seed clock + day/night window on an already-open connection (non-fatal). */
-export async function pushScheduleConnected(
-  deviceId: string,
-  cfg: { tzOffsetMin?: number; dayStartMin?: number; dayEndMin?: number },
-): Promise<void> {
-  try {
-    const tz = cfg.tzOffsetMin ?? -new Date().getTimezoneOffset();
-    await BleClient.write(
-      deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME,
-      timeToDataView(Math.floor(Date.now() / 1000), tz),
-    );
-    if (cfg.dayStartMin != null && cfg.dayEndMin != null) {
-      await BleClient.write(
-        deviceId, OA_CONFIG_SERVICE, OA_CHAR_WINDOW,
-        windowToDataView(cfg.dayStartMin, cfg.dayEndMin),
-      );
-    }
-  } catch { /* schedule sync is non-fatal */ }
-}
-
 /** Push a new scale factor (computed app-side from a known-weight delta) to an
  * already-open connection. Works for both empty-bench and hive-in-field flows. */
 export async function setFactorConnected(deviceId: string, factor: number): Promise<void> {
@@ -306,17 +278,13 @@ export async function readDiagnosticsConnected(deviceId: string): Promise<OADiag
 }
 
 /**
- * One-shot tare (connect + tare + optional schedule sync + disconnect).
+ * One-shot tare (connect + tare + disconnect).
  * Prefer the session primitives when doing several steps back-to-back.
  */
-export async function tareDevice(
-  deviceId: string,
-  cfg?: { tzOffsetMin?: number; dayStartMin?: number; dayEndMin?: number },
-): Promise<void> {
+export async function tareDevice(deviceId: string): Promise<void> {
   await connectDevice(deviceId);
   try {
     await tareConnected(deviceId);
-    if (cfg) await pushScheduleConnected(deviceId, cfg);
   } finally {
     await disconnectDevice(deviceId);
   }

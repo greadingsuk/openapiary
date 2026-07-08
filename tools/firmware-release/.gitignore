@@ -1,0 +1,6 @@
+# NEVER commit the firmware signing private key or generated release artifacts.
+firmware-signing-key.pem
+*.pem
+manifest.json
+*.zip
+*.uf2

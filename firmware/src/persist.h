@@ -19,10 +19,8 @@ struct State {
     uint32_t packetId;     // wider than the 8-bit advert field so we can persist a generation count
     uint32_t bootCount;    // incremented every time the firmware starts (reset / power-on)
     char     name[17];     // optional friendly BLE name (≤16 chars); empty = use default OA-XXXX
-    int16_t  tzOffsetMin;  // local timezone offset in minutes (for day/night scheduling)
+    int16_t  tzOffsetMin;  // local timezone offset in minutes (used for time display)
     float    batCalFactor; // per-device battery voltage trim (1.0 = no correction)
-    int16_t  dayStartMin;  // local minute-of-day daytime begins (default 06:00 = 360)
-    int16_t  dayEndMin;    // local minute-of-day daytime ends   (default 22:00 = 1320)
 };
 
 inline bool begin() {
@@ -47,8 +45,6 @@ inline bool load(State& out) {
         else if (!strncmp(line, "boot=", 5)) out.bootCount  = (uint32_t)atol(line + 5);
         else if (!strncmp(line, "tz=",   3)) out.tzOffsetMin = (int16_t)atoi(line + 3);
         else if (!strncmp(line, "batcal=", 7)) out.batCalFactor = atof(line + 7);
-        else if (!strncmp(line, "dstart=", 7)) out.dayStartMin = (int16_t)atoi(line + 7);
-        else if (!strncmp(line, "dend=", 5)) out.dayEndMin = (int16_t)atoi(line + 5);
         else if (!strncmp(line, "name=", 5)) {
             strncpy(out.name, line + 5, sizeof(out.name) - 1);
             out.name[sizeof(out.name) - 1] = '\0';
@@ -64,15 +60,13 @@ inline bool save(const State& in) {
     if (!f.open(PATH, FILE_O_WRITE)) return false;
     char buf[256];
     int n = snprintf(buf, sizeof(buf),
-                     "cal=%.4f\ntare=%ld\npid=%lu\nboot=%lu\ntz=%d\nbatcal=%.4f\ndstart=%d\ndend=%d\nname=%s\n",
+                     "cal=%.4f\ntare=%ld\npid=%lu\nboot=%lu\ntz=%d\nbatcal=%.4f\nname=%s\n",
                      in.calFactor,
                      (long)in.tareOffset,
                      (unsigned long)in.packetId,
                      (unsigned long)in.bootCount,
                      (int)in.tzOffsetMin,
                      in.batCalFactor,
-                     (int)in.dayStartMin,
-                     (int)in.dayEndMin,
                      in.name);
     if (n <= 0) { f.close(); return false; }
     f.write((const uint8_t*)buf, n);

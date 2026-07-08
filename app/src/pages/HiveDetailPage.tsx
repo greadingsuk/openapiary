@@ -21,8 +21,8 @@ import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
-import { ukDayWindow } from '../lib/sunWindow';
 import { patchHive } from '../lib/api';
+import { detectTransientExcursions } from '../lib/inspectionFilter';
 import WeightChart from '../components/WeightChart';
 import WeightHistoryChart, { type WeightChartType } from '../components/WeightHistoryChart';
 import NewApiaryModal from '../components/NewApiaryModal';
@@ -232,7 +232,12 @@ const HiveDetailPage: React.FC = () => {
   const rangeMs = range === 'custom' ? customDays * 86400_000 : RANGE_MS[range];
   const since = now - rangeMs;
   const windowed = readings.filter((r) => r.ts >= since);
-  const weights = windowed.map((r) => r.weight_kg).filter((w): w is number => w != null);
+  // Detect transient inspection excursions across the FULL history (baseline
+  // context), then apply to the visible window. Excluded readings are greyed in
+  // history and omitted from charts/stats.
+  const excludedTs = useMemo(() => detectTransientExcursions(readings), [readings]);
+  const windowedIncluded = windowed.filter((r) => !excludedTs.has(r.ts));
+  const weights = windowedIncluded.map((r) => r.weight_kg).filter((w): w is number => w != null);
   const wMin = weights.length ? Math.min(...weights) : null;
   const wMax = weights.length ? Math.max(...weights) : null;
   const wAvg = weights.length ? weights.reduce((a, b) => a + b, 0) / weights.length : null;
@@ -260,15 +265,16 @@ const HiveDetailPage: React.FC = () => {
   // Collapse consecutive identical weights into one row so a settled scale
   // doesn't show 30+ duplicate lines. Each group carries all its timestamps
   // so selecting/deleting a group affects every underlying reading.
-  interface HistGroup { weight: number | null; battery: number | null; lastTs: number; tsList: number[]; }
+  interface HistGroup { weight: number | null; battery: number | null; lastTs: number; tsList: number[]; excluded: boolean; }
   const historyGroups: HistGroup[] = [];
   for (const r of [...histSource].reverse()) {
     const w = r.weight_kg ?? null;
+    const isExcluded = excludedTs.has(r.ts);
     const prev = historyGroups[historyGroups.length - 1];
-    if (collapse && prev && prev.weight === w) {
+    if (collapse && prev && prev.weight === w && prev.excluded === isExcluded) {
       prev.tsList.push(r.ts);
     } else {
-      historyGroups.push({ weight: w, battery: r.battery_v ?? null, lastTs: r.ts, tsList: [r.ts] });
+      historyGroups.push({ weight: w, battery: r.battery_v ?? null, lastTs: r.ts, tsList: [r.ts], excluded: isExcluded });
     }
   }
 
@@ -339,10 +345,6 @@ const HiveDetailPage: React.FC = () => {
               <StatTile label="Seen" value={relativeTime(latest?.ts, now)} />
             </div>
 
-            <p className="text-xs oa-subtle px-1 -mt-1">
-              {(() => { const w = ukDayWindow(); return `Power saving: night mode ${w.sunset}–${w.sunrise} · reports every 5 min to save battery.`; })()}
-            </p>
-
             {batteryTooLowForOta && (
               <div className="oa-card p-4 flex items-start gap-3">
                 <IonIcon icon={warningOutline} style={{ color: 'var(--ion-color-warning)', fontSize: 20, marginTop: 2 }} />
@@ -385,7 +387,7 @@ const HiveDetailPage: React.FC = () => {
                 <IonSegmentButton value="candlestick"><IonLabel>Daily</IonLabel></IonSegmentButton>
                 <IonSegmentButton value="trend"><IonLabel>Trend</IonLabel></IonSegmentButton>
               </IonSegment>
-              <WeightHistoryChart readings={windowed} chartType={chartType} />
+              <WeightHistoryChart readings={windowedIncluded} chartType={chartType} />
             </div>
 
             <div className="oa-card p-4">
@@ -465,7 +467,8 @@ const HiveDetailPage: React.FC = () => {
                       const sel = g.tsList.some((t) => selected.has(t));
                       return (
                         <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
-                          onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
+                          onClick={() => selectMode && toggleGroup(g)}
+                          style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none', opacity: g.excluded ? 0.45 : 1 }}>
                           {selectMode && (
                             <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
                               style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
@@ -475,6 +478,12 @@ const HiveDetailPage: React.FC = () => {
                               {g.weight?.toFixed(2) ?? '--'} kg
                               {g.tsList.length > 1 && (
                                 <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
+                              )}
+                              {g.excluded && (
+                                <span className="text-xs font-normal px-1.5 py-0.5 rounded"
+                                  style={{ background: 'var(--oa-surface-1)', color: 'var(--oa-ink-subtle)', border: '1px solid var(--oa-glass-border)' }}>
+                                  inspection
+                                </span>
                               )}
                             </span>
                             <span className="text-xs oa-subtle">{new Date(g.lastTs).toLocaleString()}</span>

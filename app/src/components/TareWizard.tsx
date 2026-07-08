@@ -11,9 +11,8 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import {
   findDeviceId, connectDevice, disconnectDevice, tareConnected,
-  pushScheduleConnected, readDiagnosticsConnected, type OADiagnostics,
+  readDiagnosticsConnected, type OADiagnostics,
 } from '../lib/ble';
-import { ukDayWindow } from '../lib/sunWindow';
 
 type Step = 'prepare' | 'connecting' | 'measure' | 'taring' | 'verify' | 'error';
 
@@ -102,9 +101,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose, onTared }) =
     setStep('taring');
     setError(null);
     try {
-      const w = ukDayWindow();
       await tareConnected(id);
-      await pushScheduleConnected(id, { dayStartMin: w.startMin, dayEndMin: w.endMin });
       // Re-read on the SAME connection to confirm.
       const d = await readDiagnosticsConnected(id);
       setDiag(d);

@@ -6,9 +6,10 @@ import { hardwareChipOutline, checkmarkCircle, cloudDownloadOutline, warningOutl
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
-import { CURRENT_BUILD, latestFirmware, updateFirmware, type FirmwareInfo } from '../lib/ota';
+import { latestFirmware, updateFirmware, type FirmwareInfo } from '../lib/ota';
 import { readAdvertOnce } from '../lib/ble';
 import { latestReading } from '../lib/db';
+import { loadDeviceMeta, recordDeviceMeta } from '../lib/deviceMeta';
 
 const normVer = (v: string) => v.trim().toLowerCase().replace(/^v/, '');
 const BAT_RECOVERY_THRESHOLD_V = 3.3;
@@ -17,7 +18,11 @@ const FirmwarePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const deviceName = id.toUpperCase();
   const [latest, setLatest] = useState<FirmwareInfo | null>(null);
-  const [installed, setInstalled] = useState<string>(CURRENT_BUILD);
+  // Installed version is unknown until we hear it from the scale (advert) or
+  // recall a previously-seen value (deviceMeta). Never assume the app's own
+  // build number — that produced a false "up to date".
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pct, setPct] = useState<number | null>(null);
   const [phase, setPhase] = useState('');
@@ -28,13 +33,24 @@ const FirmwarePage: React.FC = () => {
 
   useIonViewWillEnter(() => {
     setLoadError(null);
+    setChecking(true);
     void latestFirmware().then(setLatest).catch((e) =>
       setLoadError(e instanceof Error ? e.message : String(e)),
     );
-    // Read the installed version straight from the scale's advert (passive).
+    // Recall the last version we heard from this scale so we show something
+    // truthful immediately, before the (slower) live advert read.
+    void loadDeviceMeta().then((store) => {
+      const fw = store[id.toLowerCase()]?.fw;
+      if (fw) setInstalled((cur) => cur ?? fw);
+    }).catch(() => undefined);
+    // Read the installed version straight from the scale's advert (passive,
+    // authoritative). Persist it so the Fleet screen and next visit agree.
     if (Capacitor.isNativePlatform()) {
       void readAdvertOnce(deviceName, 6000).then((a) => {
-        if (a?.fwVersion) setInstalled(a.fwVersion);
+        if (a?.fwVersion) {
+          setInstalled(a.fwVersion);
+          void recordDeviceMeta(id, { fw: a.fwVersion });
+        }
         if (typeof a?.batteryV === 'number') {
           setBatteryV(a.batteryV);
           setBatterySource('live');
@@ -42,7 +58,9 @@ const FirmwarePage: React.FC = () => {
         if (typeof a?.charging === 'boolean') {
           setCharging(a.charging);
         }
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => setChecking(false));
+    } else {
+      setChecking(false);
     }
     // Fallback: if we didn't hear a live advert, use the latest cached reading.
     void latestReading(id).then((r) => {
@@ -52,7 +70,8 @@ const FirmwarePage: React.FC = () => {
     }).catch(() => undefined);
   });
 
-  const upToDate = !!latest && normVer(latest.version) === normVer(installed);
+  const versionKnown = installed != null;
+  const upToDate = !!latest && versionKnown && normVer(latest.version) === normVer(installed!);
   const busy = pct != null;
   const batteryKnown = batteryV != null;
   const batteryTooLowForOta = batteryKnown && batteryV < BAT_RECOVERY_THRESHOLD_V;
@@ -93,7 +112,14 @@ const FirmwarePage: React.FC = () => {
           <div className="oa-card p-5 flex flex-col items-center gap-2">
             <IonIcon icon={hardwareChipOutline} style={{ fontSize: 40, color: 'var(--oa-honey-600)' }} />
             <span className="text-sm oa-muted">Installed on {deviceName}</span>
-            <span className="oa-numeral text-2xl font-bold" style={{ color: 'var(--oa-ink)' }}>{installed}</span>
+            <span className="oa-numeral text-2xl font-bold" style={{ color: 'var(--oa-ink)' }}>
+              {installed ?? (checking ? 'Checking…' : 'Unknown')}
+            </span>
+            {!versionKnown && !checking && (
+              <span className="text-xs oa-subtle text-center">
+                Couldn't hear the scale. Bring it within range and reopen this screen.
+              </span>
+            )}
           </div>
 
           {loadError ? (
@@ -110,7 +136,7 @@ const FirmwarePage: React.FC = () => {
             <div className="oa-card p-4 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>{latest.version} available</span>
-                <span className="text-xs oa-subtle">{installed} → {latest.version}</span>
+                <span className="text-xs oa-subtle">{installed ?? 'unknown'} → {latest.version}</span>
               </div>
               {latest.notes && <p className="text-sm oa-muted whitespace-pre-line">{latest.notes}</p>}
 
@@ -131,10 +157,13 @@ const FirmwarePage: React.FC = () => {
 
               {!busy ? (
                 <>
-                  <IonNote className="text-xs" style={{ color: 'var(--oa-ink)' }}>
-                    Keep the app open and the scale nearby. The update begins on the scale's next
-                    heartbeat (up to ~60s) — no need to touch the scale.
-                  </IonNote>
+                  <ol className="text-xs oa-muted flex flex-col gap-1 pl-4 list-decimal" style={{ marginTop: 4 }}>
+                    <li>Stand within a few metres of the scale and keep this screen open.</li>
+                    <li>Make sure the battery is above {BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V — leave it in sunlight first if it's low.</li>
+                    <li>Tap “Update over Bluetooth”. The scale picks it up on its next heartbeat (up to ~60s) — no button press needed.</li>
+                    <li>Keep the app in the foreground until it finishes (a minute or two).</li>
+                    <li>If it drops out, the scale safely waits in update mode — just tap update again.</li>
+                  </ol>
                   <IonButton expand="block" onClick={run} className="ion-margin-top" disabled={!canStartUpdate}>
                     <IonIcon slot="start" icon={cloudDownloadOutline} /> Update over Bluetooth
                   </IonButton>

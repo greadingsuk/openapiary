@@ -26,7 +26,7 @@ static const uint8_t PIN_VBAT_EN   = 14;
 // Battery divider correction (see main.cpp). Nominal term over-reads ~1.30x.
 static const float BAT_DIVIDER_CAL = 0.7698f;
 
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 360, 1320 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
 
 // Battery voltage with the fixed divider correction but WITHOUT the per-device
 // trim (used by `batcal` to compute a fresh trim from a multimeter reading).

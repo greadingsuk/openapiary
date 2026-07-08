@@ -38,10 +38,9 @@ static const uint8_t PIN_VBAT_EN   = 14;   // P0.14 - drive LOW to enable divide
 // PIN_VBAT (P0.31) is provided by the Adafruit core as PIN_VBAT
 
 // ---- Timing ----
-// Adaptive cadence (docs/todo-plan.md §3a): 1-min during daylight, 5-min at
-// night to conserve battery. Falls back to 1-min until the app seeds the time.
-static const uint32_t WAKE_DAY_MS   = 60UL * 1000UL;            // 06:00-22:00 local
-static const uint32_t WAKE_NIGHT_MS = 5UL * 60UL * 1000UL;      // 22:00-06:00 local
+// Flat 1-minute wake/read/advert cycle (day and night the same). Simpler than
+// adaptive day/night scheduling; solar comfortably covers the extra draw.
+static const uint32_t WAKE_MS = 60UL * 1000UL;
 static const uint32_t PAIRING_WINDOW_MS = 60UL * 1000UL;        // connectable window after boot
 static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets across ch 37/38/39
 // After each heartbeat the scale stays CONNECTABLE for this long so the app can
@@ -68,19 +67,9 @@ static const float BAT_RECOVERY_THRESHOLD_V = 3.3f;    // modest hysteresis abov
 static const float BAT_DIVIDER_CAL = 0.7698f;
 
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 360, 1320 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
 
-// Returns the wake interval for the current local time (day vs night).
-static uint32_t nextWakeIntervalMs() {
-    int m = OAConfig::localMinuteOfDay();
-    if (m < 0) return WAKE_DAY_MS;            // time unknown → assume daytime
-    int start = g_state.dayStartMin;
-    int end   = g_state.dayEndMin;
-    bool day = (start <= end) ? (m >= start && m < end)
-                              : (m >= start || m < end);  // window wrapping midnight
-    return day ? WAKE_DAY_MS : WAKE_NIGHT_MS;
-}
 
 // Resolve the BLE local name: persisted friendly name if set, else OA-XXXX.
 static void resolveLocalName(char* out, size_t cap) {
@@ -359,8 +348,7 @@ void loop() {
     }
 
     // 6. Sleep until next cycle (FreeRTOS idle -> __WFE; see header comment).
-    //    Interval adapts to local time of day once the app has seeded the clock.
-    delay(nextWakeIntervalMs());
+    delay(WAKE_MS);
 }
 
 float readBatteryVoltage() {
