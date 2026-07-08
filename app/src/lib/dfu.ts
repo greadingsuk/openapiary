@@ -208,25 +208,97 @@ async function transferFirmware(
 /**
  * Trigger buttonless DFU on a scale that is currently in its pairing window.
  * The scale acknowledges, disconnects, and reboots into the bootloader.
+ *
+ * Robustness: iOS caches a peripheral's GATT table and can serve a STALE copy
+ * captured when the scale ran older firmware that didn't expose the buttonless
+ * DFU characteristic — which surfaces as "Characteristic not found" even though
+ * the running firmware has it. We defeat that by forcing a fresh service
+ * discovery and confirming the characteristic is really present before using
+ * it, retrying with a full reconnect a few times.
  */
-export async function triggerButtonlessDfu(deviceId: string): Promise<void> {
-  await BleClient.connect(deviceId, () => undefined);
+/** Force a fresh discovery, then report whether service+characteristic exist. */
+async function hasCharacteristic(
+  deviceId: string,
+  service: string,
+  characteristic: string,
+): Promise<{ present: boolean; serviceUuids: string[] }> {
   try {
-    let acked = false;
-    await BleClient.startNotifications(deviceId, DFU_SERVICE, DFU_BUTTONLESS, (dv) => {
-      // [0x20, 0x01, 0x01] = response, enter-bootloader, success
-      if (dv.getUint8(0) === 0x20 && dv.getUint8(2) === 0x01) acked = true;
-    });
-    await BleClient.write(deviceId, DFU_SERVICE, DFU_BUTTONLESS, toDataView(new Uint8Array([0x01])));
-    // The device disconnects almost immediately; give it a beat to ack + reboot.
-    for (let i = 0; i < 20 && !acked; i++) await sleep(100);
-  } finally {
+    // On iOS/Android this re-reads the peripheral's GATT rather than trusting
+    // the OS cache (no-op / unsupported on web, which we never hit here).
+    await BleClient.discoverServices(deviceId);
+  } catch {
+    /* fall through to getServices */
+  }
+  let services: { uuid: string; characteristics: { uuid: string }[] }[] = [];
+  try {
+    services = await BleClient.getServices(deviceId);
+  } catch {
+    return { present: false, serviceUuids: [] };
+  }
+  const serviceUuids = services.map((s) => s.uuid.toLowerCase());
+  const svc = services.find((s) => s.uuid.toLowerCase() === service.toLowerCase());
+  const present = !!svc && svc.characteristics.some(
+    (c) => c.uuid.toLowerCase() === characteristic.toLowerCase(),
+  );
+  return { present, serviceUuids };
+}
+
+export async function triggerButtonlessDfu(deviceId: string): Promise<void> {
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  let sawDfuService = false;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      await BleClient.disconnect(deviceId);
-    } catch {
-      /* the scale has already dropped the link as it reboots */
+      await BleClient.connect(deviceId, () => undefined);
+    } catch (e) {
+      lastErr = e;
+      await sleep(700);
+      continue;
+    }
+
+    try {
+      const { present, serviceUuids } = await hasCharacteristic(
+        deviceId, DFU_SERVICE, DFU_BUTTONLESS,
+      );
+      if (serviceUuids.includes(DFU_SERVICE.toLowerCase())) sawDfuService = true;
+
+      if (!present) {
+        // Not visible yet — drop the link and retry; a reconnect + re-discovery
+        // often clears a transient/stale view.
+        await BleClient.disconnect(deviceId).catch(() => undefined);
+        lastErr = new Error('buttonless-dfu-missing');
+        await sleep(700);
+        continue;
+      }
+
+      let acked = false;
+      await BleClient.startNotifications(deviceId, DFU_SERVICE, DFU_BUTTONLESS, (dv) => {
+        // [0x20, 0x01, 0x01] = response, enter-bootloader, success
+        if (dv.getUint8(0) === 0x20 && dv.getUint8(2) === 0x01) acked = true;
+      });
+      await BleClient.write(deviceId, DFU_SERVICE, DFU_BUTTONLESS, toDataView(new Uint8Array([0x01])));
+      // The device disconnects almost immediately; give it a beat to ack + reboot.
+      for (let i = 0; i < 20 && !acked; i++) await sleep(100);
+      try { await BleClient.disconnect(deviceId); } catch { /* rebooting */ }
+      return; // success
+    } catch (e) {
+      lastErr = e;
+      try { await BleClient.disconnect(deviceId); } catch { /* already gone */ }
+      await sleep(700);
     }
   }
+
+  if (lastErr instanceof Error && lastErr.message === 'buttonless-dfu-missing') {
+    throw new Error(
+      sawDfuService
+        ? "The scale's update service is visible but the update trigger isn't responding. Move closer, keep the app open, and try again."
+        : "Your phone has a stale Bluetooth cache for this scale and can't see its update service. Turn the phone's Bluetooth fully off and on (or restart the phone), then try again.",
+    );
+  }
+  throw new Error(
+    `Couldn't start the update over Bluetooth${lastErr instanceof Error ? `: ${lastErr.message}` : ''}. Keep the phone close and try again.`,
+  );
 }
 
 /**
@@ -278,6 +350,8 @@ export async function runSecureDfu(
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await BleClient.connect(bootloaderId, () => undefined);
+      // Force a fresh discovery so we never act on a stale cached GATT table.
+      try { await BleClient.discoverServices(bootloaderId); } catch { /* best effort */ }
       const cp = new ControlPoint(bootloaderId);
       try {
         await cp.start();
