@@ -1,69 +1,68 @@
-// Nordic Secure DFU over BLE — pure TypeScript on top of the app's existing
-// @capacitor-community/bluetooth-le stack (one codepath for iOS / Android; the
-// web build falls back to a simulation in ota.ts).
+// OTA firmware over BLE — LEGACY Nordic DFU (Adafruit nRF52 bootloader).
 //
-// This drives the same Secure DFU protocol Nordic's official mobile libraries
-// use, against the Adafruit nRF52 bootloader's DFU service (0xFE59). The
-// anti-brick guarantee comes from the bootloader itself: it validates the
-// signed init packet before activating an image and, if a transfer is
-// interrupted, stays in DFU mode (advertising "DfuTarg") so we can simply
-// reconnect and retry — it never boots a partial/invalid image.
+// IMPORTANT: The XIAO nRF52840 runs the Adafruit bootloader, whose BLEDfu
+// service is the *legacy* Nordic DFU (SDK 11, dfu_version 0.5), NOT Secure DFU.
+//   DFU Service : 00001530-1212-EFDE-1523-785FEABCD123
+//   DFU Control : 00001531-1212-EFDE-1523-785FEABCD123  (write + notify)
+//   DFU Packet  : 00001532-1212-EFDE-1523-785FEABCD123  (write without response)
+// The DFU distribution .zip carries firmware.bin + firmware.dat (init packet)
+// with a manifest whose dfu_version is 0.5 — the classic legacy format.
 //
-// Flow:
-//   1. Buttonless trigger: connect during the scale's pairing window and write
-//      0x01 to the buttonless DFU characteristic -> the scale reboots into the
-//      bootloader and advertises the DFU service.
-//   2. Reconnect to that bootloader advertiser (DfuTarg).
-//   3. Transfer the init packet (.dat) then the firmware image (.bin) as CRC-
-//      validated objects, then execute. The bootloader verifies + swaps.
+// Buttonless entry (from the running app firmware, same 00001530 service):
+//   1. Enable notifications on the control point (the firmware REJECTS the
+//      trigger with a CCCD error if notifications aren't enabled first).
+//   2. Write 0x01 (START_DFU) to the control point. The scale saves peer data,
+//      disconnects, sets the DFU magic in GPREGRET and reboots into the
+//      bootloader, which then advertises the 00001530 service for reconnect.
+//
+// Transfer (in the bootloader) — classic SDK 11 sequence:
+//   START_DFU(app) -> sizes -> INIT params(.dat) -> RECEIVE_IMAGE(.bin, with
+//   packet-receipt flow control) -> VALIDATE -> ACTIVATE_AND_RESET.
+//
+// Anti-brick: the bootloader validates the CRC in the init packet and only
+// activates a fully received image; an interrupted transfer leaves it waiting
+// in DFU mode, so we simply reconnect and retry — it never boots a bad image.
 
 import { BleClient } from '@capacitor-community/bluetooth-le';
 
-// --- UUIDs (Nordic Secure DFU) ---
-export const DFU_SERVICE = '0000fe59-0000-1000-8000-00805f9b34fb';
-const DFU_CONTROL = '8ec90001-f315-4f60-9fb8-838830daea50';
-const DFU_PACKET = '8ec90002-f315-4f60-9fb8-838830daea50';
-// Buttonless DFU (without bonds) — lives under 0xFE59 while the app is running.
-const DFU_BUTTONLESS = '8ec90003-f315-4f60-9fb8-838830daea50';
+// --- UUIDs (legacy Nordic DFU / Adafruit BLEDfu) ---
+export const DFU_SERVICE = '00001530-1212-efde-1523-785feabcd123';
+const DFU_CONTROL = '00001531-1212-efde-1523-785feabcd123';
+const DFU_PACKET = '00001532-1212-efde-1523-785feabcd123';
 
-// --- Control point opcodes ---
-const OP_CREATE = 0x01;
-const OP_SET_PRN = 0x02;
-const OP_CALC_CRC = 0x03;
-const OP_EXECUTE = 0x04;
-const OP_SELECT = 0x06;
-const OP_RESPONSE = 0x60;
+// --- Control point opcodes (SDK 11 legacy) ---
+const OP_START_DFU = 0x01;
+const OP_INIT_DFU = 0x02;
+const OP_RECEIVE_IMAGE = 0x03;
+const OP_VALIDATE = 0x04;
+const OP_ACTIVATE_RESET = 0x05;
+const OP_PRN_REQUEST = 0x08;
+const OP_RESPONSE = 0x10;
+const OP_RECEIPT = 0x11;
 const RES_SUCCESS = 0x01;
 
-const OBJ_COMMAND = 0x01; // init packet (.dat)
-const OBJ_DATA = 0x02; // firmware image (.bin)
+const IMG_APPLICATION = 0x04; // START_DFU image type: application only
 
-// Conservative packet chunk (min-MTU safe). Larger MTUs would go faster but the
-// plugin doesn't expose MTU negotiation on all platforms; correctness first.
+// BLE min-MTU-safe packet chunk. The plugin has no packet-receipt flow control
+// of its own, so we use the DFU protocol's packet-receipt notifications (PRN)
+// to pace the stream instead.
 const PACKET_CHUNK = 20;
+const PRN_INTERVAL = 12; // request a receipt every N packets (~240 bytes)
 
 export interface DfuInput {
-  initPacket: Uint8Array; // the .dat from the DFU .zip (signed init packet)
-  firmware: Uint8Array; // the .bin from the DFU .zip
+  initPacket: Uint8Array; // firmware.dat (legacy init packet)
+  firmware: Uint8Array; // firmware.bin
 }
 
 export type DfuProgress = (pct: number, phase: string) => void;
 
-// --- CRC32 (IEEE / zlib) — Nordic Secure DFU uses this over transferred bytes ---
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
+export type DfuTriggerCode = 'connect-failed' | 'service-missing' | 'char-missing' | 'trigger-failed';
 
-function crc32(prev: number, bytes: Uint8Array): number {
-  let c = (prev ^ 0xffffffff) >>> 0;
-  for (let i = 0; i < bytes.length; i++) c = (CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8)) >>> 0;
-  return (c ^ 0xffffffff) >>> 0;
+export class DfuTriggerError extends Error {
+  constructor(public code: DfuTriggerCode, message: string) {
+    super(message);
+    this.name = 'DfuTriggerError';
+  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -74,152 +73,10 @@ function toDataView(bytes: Uint8Array): DataView {
   return dv;
 }
 
-/**
- * A single-in-flight request/response wrapper for the DFU control point.
- * We run with PRN disabled, so every control-point write yields exactly one
- * response notification — a single pending resolver is sufficient.
- */
-class ControlPoint {
-  private pending: ((dv: DataView) => void) | null = null;
-  private failPending: ((e: Error) => void) | null = null;
-
-  constructor(private deviceId: string) {}
-
-  async start(): Promise<void> {
-    await BleClient.startNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL, (value) => {
-      const p = this.pending;
-      this.pending = null;
-      this.failPending = null;
-      if (p) p(value);
-    });
-  }
-
-  async stop(): Promise<void> {
-    try {
-      await BleClient.stopNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  /** Write a command and wait for its response notification. */
-  async command(bytes: number[], timeoutMs = 15000): Promise<DataView> {
-    const wait = new Promise<DataView>((resolve, reject) => {
-      this.pending = resolve;
-      this.failPending = reject;
-    });
-    await BleClient.write(this.deviceId, DFU_SERVICE, DFU_CONTROL, toDataView(new Uint8Array(bytes)));
-    const timer = new Promise<DataView>((_, reject) =>
-      setTimeout(() => reject(new Error('DFU control point timed out')), timeoutMs),
-    );
-    const dv = await Promise.race([wait, timer]);
-    // Response layout: [0x60, reqOpcode, resultCode, ...payload]
-    if (dv.getUint8(0) !== OP_RESPONSE) throw new Error('DFU: malformed response');
-    if (dv.getUint8(2) !== RES_SUCCESS) {
-      throw new Error(`DFU rejected (op 0x${dv.getUint8(1).toString(16)}, result ${dv.getUint8(2)})`);
-    }
-    return dv;
-  }
-}
-
-interface SelectResult {
-  maxSize: number;
-  offset: number;
-  crc: number;
-}
-
-function parseSelect(dv: DataView): SelectResult {
-  // [0x60, 0x06, 0x01, maxSize(4 LE), offset(4 LE), crc(4 LE)]
-  return {
-    maxSize: dv.getUint32(3, true),
-    offset: dv.getUint32(7, true),
-    crc: dv.getUint32(11, true),
-  };
-}
-
-async function writePacketBytes(deviceId: string, bytes: Uint8Array): Promise<void> {
-  for (let off = 0; off < bytes.length; off += PACKET_CHUNK) {
-    const chunk = bytes.subarray(off, Math.min(off + PACKET_CHUNK, bytes.length));
-    await BleClient.writeWithoutResponse(deviceId, DFU_SERVICE, DFU_PACKET, toDataView(chunk));
-  }
-}
-
-/** Transfer the init packet (command object). Small enough for a single object. */
-async function transferInitPacket(cp: ControlPoint, deviceId: string, dat: Uint8Array): Promise<void> {
-  const sel = parseSelect(await cp.command([OP_SELECT, OBJ_COMMAND]));
-  if (dat.length > sel.maxSize) throw new Error('DFU: init packet larger than command object');
-  await cp.command([OP_SET_PRN, 0x00, 0x00]); // disable packet receipt notifications
-  await cp.command([
-    OP_CREATE,
-    OBJ_COMMAND,
-    dat.length & 0xff,
-    (dat.length >> 8) & 0xff,
-    (dat.length >> 16) & 0xff,
-    (dat.length >> 24) & 0xff,
-  ]);
-  await writePacketBytes(deviceId, dat);
-  const crcDv = await cp.command([OP_CALC_CRC]);
-  const gotCrc = crcDv.getUint32(7, true);
-  if (gotCrc !== crc32(0, dat)) throw new Error('DFU: init packet CRC mismatch');
-  await cp.command([OP_EXECUTE]);
-}
-
-/** Transfer the firmware image (data objects), reporting progress 0..100. */
-async function transferFirmware(
-  cp: ControlPoint,
-  deviceId: string,
-  bin: Uint8Array,
-  onProgress: DfuProgress,
-): Promise<void> {
-  const sel = parseSelect(await cp.command([OP_SELECT, OBJ_DATA]));
-  const objSize = sel.maxSize; // e.g. 4096
-  await cp.command([OP_SET_PRN, 0x00, 0x00]); // CRC checked after each object
-
-  let sent = 0;
-  let runningCrc = 0;
-  while (sent < bin.length) {
-    const len = Math.min(objSize, bin.length - sent);
-    const obj = bin.subarray(sent, sent + len);
-
-    await cp.command([
-      OP_CREATE,
-      OBJ_DATA,
-      len & 0xff,
-      (len >> 8) & 0xff,
-      (len >> 16) & 0xff,
-      (len >> 24) & 0xff,
-    ]);
-    await writePacketBytes(deviceId, obj);
-    runningCrc = crc32(runningCrc, obj);
-
-    const crcDv = await cp.command([OP_CALC_CRC]);
-    const gotOffset = crcDv.getUint32(3, true);
-    const gotCrc = crcDv.getUint32(7, true);
-    if (gotOffset !== sent + len || gotCrc !== runningCrc) {
-      throw new Error('DFU: firmware object CRC mismatch');
-    }
-    await cp.command([OP_EXECUTE]);
-
-    sent += len;
-    onProgress(Math.round((sent / bin.length) * 100), 'Uploading');
-  }
-}
-
-/**
- * Trigger buttonless DFU. The scale is only *connectable* for a few seconds per
- * heartbeat, so the caller (ota.ts) re-scans and retries this across heartbeat
- * windows. This function is a single, controlled attempt:
- *   connect (bounded) -> force fresh discovery -> verify the buttonless
- *   characteristic really exists (iOS can serve a stale cached GATT) -> write.
- * It throws a typed DfuTriggerError so the caller can decide whether to retry.
- */
-export type DfuTriggerCode = 'connect-failed' | 'service-missing' | 'char-missing' | 'trigger-failed';
-
-export class DfuTriggerError extends Error {
-  constructor(public code: DfuTriggerCode, message: string) {
-    super(message);
-    this.name = 'DfuTriggerError';
-  }
+function u32le(n: number): Uint8Array {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, n >>> 0, true);
+  return b;
 }
 
 /** Force a fresh discovery, then report whether service+characteristic exist. */
@@ -229,8 +86,6 @@ async function hasCharacteristic(
   characteristic: string,
 ): Promise<{ present: boolean; serviceUuids: string[] }> {
   try {
-    // On iOS/Android this re-reads the peripheral's GATT rather than trusting
-    // the OS cache (no-op / unsupported on web, which we never hit here).
     await BleClient.discoverServices(deviceId);
   } catch {
     /* fall through to getServices */
@@ -249,9 +104,15 @@ async function hasCharacteristic(
   return { present, serviceUuids };
 }
 
+/**
+ * Trigger buttonless DFU. The scale is only *connectable* for a few seconds per
+ * heartbeat, so the caller (ota.ts) re-scans and retries this across heartbeat
+ * windows. Single controlled attempt:
+ *   connect (bounded) -> verify the legacy DFU control characteristic exists
+ *   -> enable notifications (required) -> write START_DFU (0x01).
+ * Throws a typed DfuTriggerError so the caller can decide whether to retry.
+ */
 export async function triggerButtonlessDfu(deviceId: string): Promise<void> {
-  // Bounded connect: the connectable window is short, so don't hang the full
-  // default timeout — fail fast and let the caller catch the next heartbeat.
   try {
     await BleClient.connect(deviceId, () => undefined, { timeout: 9000 });
   } catch (e) {
@@ -262,25 +123,26 @@ export async function triggerButtonlessDfu(deviceId: string): Promise<void> {
   }
 
   try {
-    const { present, serviceUuids } = await hasCharacteristic(
-      deviceId, DFU_SERVICE, DFU_BUTTONLESS,
-    );
+    const { present, serviceUuids } = await hasCharacteristic(deviceId, DFU_SERVICE, DFU_CONTROL);
     if (!present) {
       const hasService = serviceUuids.includes(DFU_SERVICE.toLowerCase());
       throw new DfuTriggerError(
         hasService ? 'char-missing' : 'service-missing',
-        hasService ? 'buttonless characteristic missing' : 'DFU service not visible',
+        hasService ? 'DFU control characteristic missing' : 'DFU service not visible',
       );
     }
 
-    let acked = false;
-    await BleClient.startNotifications(deviceId, DFU_SERVICE, DFU_BUTTONLESS, (dv) => {
-      // [0x20, 0x01, 0x01] = response, enter-bootloader, success
-      if (dv.getUint8(0) === 0x20 && dv.getUint8(2) === 0x01) acked = true;
-    });
-    await BleClient.write(deviceId, DFU_SERVICE, DFU_BUTTONLESS, toDataView(new Uint8Array([0x01])));
-    // The device disconnects almost immediately; give it a beat to ack + reboot.
-    for (let i = 0; i < 20 && !acked; i++) await sleep(100);
+    // The firmware's control-point write-authorize callback rejects the trigger
+    // unless notifications (CCCD) are enabled — so subscribe first.
+    await BleClient.startNotifications(deviceId, DFU_SERVICE, DFU_CONTROL, () => undefined);
+    // Write START_DFU. The scale disconnects + reboots immediately, so the write
+    // may reject with a disconnection error — that's the expected success path.
+    try {
+      await BleClient.write(deviceId, DFU_SERVICE, DFU_CONTROL, toDataView(new Uint8Array([OP_START_DFU])));
+    } catch {
+      /* disconnect race as the scale reboots into the bootloader */
+    }
+    await sleep(400);
   } catch (e) {
     if (e instanceof DfuTriggerError) throw e;
     throw new DfuTriggerError('trigger-failed', e instanceof Error ? e.message : String(e));
@@ -290,10 +152,10 @@ export async function triggerButtonlessDfu(deviceId: string): Promise<void> {
 }
 
 /**
- * Scan for the bootloader advertiser (DfuTarg — advertises the 0xFE59 service)
- * after a buttonless trigger, and return its live BLE deviceId.
+ * Scan for the bootloader advertiser after a buttonless trigger (it advertises
+ * the legacy DFU service) and return its live BLE deviceId.
  */
-export async function findBootloader(timeoutMs = 20000): Promise<string> {
+export async function findBootloader(timeoutMs = 25000): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     let done = false;
     let best: { id: string; rssi: number } | null = null;
@@ -303,17 +165,13 @@ export async function findBootloader(timeoutMs = 20000): Promise<string> {
       void BleClient.stopLEScan().catch(() => undefined);
       if (err) reject(err);
       else if (best) resolve(best.id);
-      else reject(new Error('Bootloader not found — the scale did not enter DFU mode'));
+      else reject(new Error('Bootloader not found — the scale did not enter update mode.'));
     };
     const timer = setTimeout(() => finish(), timeoutMs);
     BleClient.requestLEScan({ services: [DFU_SERVICE], allowDuplicates: true }, (result) => {
       const rssi = result.rssi ?? -999;
-      const name = result.localName ?? result.device.name ?? '';
-      // Prefer a "DfuTarg" by name; otherwise strongest FE59 advertiser.
-      const isDfu = name.toLowerCase().includes('dfu') || true;
-      if (isDfu && (!best || rssi > best.rssi)) best = { id: result.device.deviceId, rssi };
-      // Resolve quickly once we have a strong candidate.
-      if (best && best.rssi > -60) {
+      if (!best || rssi > best.rssi) best = { id: result.device.deviceId, rssi };
+      if (best && best.rssi > -55) {
         clearTimeout(timer);
         finish();
       }
@@ -325,11 +183,77 @@ export async function findBootloader(timeoutMs = 20000): Promise<string> {
 }
 
 /**
- * Run the Secure DFU byte transfer against a bootloader deviceId. Retries the
- * connection a few times because the DfuTarg advert can take a moment to appear
- * and the first connect after a reboot occasionally races the stack.
+ * Control-point notification router. The legacy bootloader sends two kinds of
+ * notification on the control point:
+ *   - RESPONSE (0x10): [0x10, reqOpcode, resultCode, ...]
+ *   - RECEIPT  (0x11): [0x11, bytesReceived(uint32 LE)]  (packet-receipt flow ctl)
  */
-export async function runSecureDfu(
+class DfuControl {
+  private respResolve: ((dv: DataView) => void) | null = null;
+  private receiptResolve: ((dv: DataView) => void) | null = null;
+
+  constructor(private deviceId: string) {}
+
+  async start(): Promise<void> {
+    await BleClient.startNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL, (dv) => {
+      const op = dv.getUint8(0);
+      if (op === OP_RESPONSE) {
+        const r = this.respResolve; this.respResolve = null; if (r) r(dv);
+      } else if (op === OP_RECEIPT) {
+        const r = this.receiptResolve; this.receiptResolve = null; if (r) r(dv);
+      }
+    });
+  }
+
+  async stop(): Promise<void> {
+    try { await BleClient.stopNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL); } catch { /* ignore */ }
+  }
+
+  /** Arm a response waiter BEFORE the write that will trigger it. */
+  armResponse(timeoutMs = 20000): Promise<DataView> {
+    return new Promise<DataView>((resolve, reject) => {
+      this.respResolve = resolve;
+      setTimeout(() => {
+        if (this.respResolve === resolve) { this.respResolve = null; reject(new Error('DFU control point timed out')); }
+      }, timeoutMs);
+    });
+  }
+
+  /** Arm a packet-receipt waiter BEFORE sending the packets it acknowledges. */
+  armReceipt(timeoutMs = 20000): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      this.receiptResolve = (dv) => resolve(dv.getUint32(1, true));
+      setTimeout(() => {
+        if (this.receiptResolve) { this.receiptResolve = null; reject(new Error('DFU packet receipt timed out')); }
+      }, timeoutMs);
+    });
+  }
+
+  writeControl(bytes: number[]): Promise<void> {
+    return BleClient.write(this.deviceId, DFU_SERVICE, DFU_CONTROL, toDataView(new Uint8Array(bytes)));
+  }
+
+  async writePacket(bytes: Uint8Array): Promise<void> {
+    for (let off = 0; off < bytes.length; off += PACKET_CHUNK) {
+      const chunk = bytes.subarray(off, Math.min(off + PACKET_CHUNK, bytes.length));
+      await BleClient.writeWithoutResponse(this.deviceId, DFU_SERVICE, DFU_PACKET, toDataView(chunk));
+    }
+  }
+}
+
+function checkResponse(dv: DataView, expectedOp: number): void {
+  // [0x10, reqOpcode, resultCode, ...]
+  if (dv.getUint8(0) !== OP_RESPONSE) throw new Error('DFU: malformed response');
+  if (dv.getUint8(1) !== expectedOp) throw new Error(`DFU: response for wrong op (got 0x${dv.getUint8(1).toString(16)})`);
+  if (dv.getUint8(2) !== RES_SUCCESS) throw new Error(`DFU rejected (op 0x${expectedOp.toString(16)}, result ${dv.getUint8(2)})`);
+}
+
+/**
+ * Run the legacy DFU byte transfer against a bootloader deviceId. Retries the
+ * connection a few times because the bootloader advert can take a moment to
+ * appear and the first connect after a reboot occasionally races the stack.
+ */
+export async function runLegacyDfu(
   bootloaderId: string,
   input: DfuInput,
   onProgress: DfuProgress,
@@ -337,23 +261,79 @@ export async function runSecureDfu(
   let lastErr: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await BleClient.connect(bootloaderId, () => undefined);
-      // Force a fresh discovery so we never act on a stale cached GATT table.
+      await BleClient.connect(bootloaderId, () => undefined, { timeout: 12000 });
       try { await BleClient.discoverServices(bootloaderId); } catch { /* best effort */ }
-      const cp = new ControlPoint(bootloaderId);
+      const ctl = new DfuControl(bootloaderId);
       try {
-        await cp.start();
+        await ctl.start();
         onProgress(0, 'Preparing');
-        await transferInitPacket(cp, bootloaderId, input.initPacket);
-        await transferFirmware(cp, bootloaderId, input.firmware, onProgress);
-        onProgress(100, 'Verifying');
-      } finally {
-        await cp.stop();
-        try {
-          await BleClient.disconnect(bootloaderId);
-        } catch {
-          /* bootloader reboots into the new app on success */
+
+        // 1. START_DFU (application) + image sizes [sd=0, bl=0, app=len].
+        let resp = ctl.armResponse();
+        await ctl.writeControl([OP_START_DFU, IMG_APPLICATION]);
+        const sizes = new Uint8Array(12);
+        sizes.set(u32le(0), 0);                     // softdevice size
+        sizes.set(u32le(0), 4);                     // bootloader size
+        sizes.set(u32le(input.firmware.length), 8); // application size
+        await ctl.writePacket(sizes);
+        checkResponse(await resp, OP_START_DFU);
+
+        // 2. Init packet (.dat): begin -> stream -> complete.
+        onProgress(0, 'Sending init packet');
+        await ctl.writeControl([OP_INIT_DFU, 0x00]); // receive init packet
+        await ctl.writePacket(input.initPacket);
+        resp = ctl.armResponse();
+        await ctl.writeControl([OP_INIT_DFU, 0x01]); // init packet complete
+        checkResponse(await resp, OP_INIT_DFU);
+
+        // 3. Configure packet-receipt notifications for flow control.
+        await ctl.writeControl([OP_PRN_REQUEST, PRN_INTERVAL & 0xff, (PRN_INTERVAL >> 8) & 0xff]);
+
+        // 4. Receive firmware image with PRN pacing.
+        onProgress(0, 'Uploading');
+        const bin = input.firmware;
+        const total = bin.length;
+        resp = ctl.armResponse(60000); // completion arrives after the last packet
+        await ctl.writeControl([OP_RECEIVE_IMAGE]);
+
+        let sent = 0;
+        let packetsSinceReceipt = 0;
+        while (sent < total) {
+          let receipt: Promise<number> | null = null;
+          // Send up to PRN_INTERVAL packets, then wait for a receipt (unless we
+          // finished the image, in which case the completion response follows).
+          while (packetsSinceReceipt < PRN_INTERVAL && sent < total) {
+            const len = Math.min(PACKET_CHUNK, total - sent);
+            if (packetsSinceReceipt === PRN_INTERVAL - 1 && sent + len < total) {
+              receipt = ctl.armReceipt(); // arm before the packet that triggers it
+            }
+            await BleClient.writeWithoutResponse(
+              bootloaderId, DFU_SERVICE, DFU_PACKET, toDataView(bin.subarray(sent, sent + len)),
+            );
+            sent += len;
+            packetsSinceReceipt++;
+          }
+          if (receipt) {
+            const ack = await receipt;
+            if (ack !== sent) throw new Error(`DFU: receipt offset mismatch (${ack} vs ${sent})`);
+            packetsSinceReceipt = 0;
+          }
+          onProgress(Math.round((sent / total) * 100), 'Uploading');
         }
+
+        checkResponse(await resp, OP_RECEIVE_IMAGE);
+
+        // 5. Validate, then activate & reset (device reboots into the new app).
+        onProgress(100, 'Verifying');
+        resp = ctl.armResponse();
+        await ctl.writeControl([OP_VALIDATE]);
+        checkResponse(await resp, OP_VALIDATE);
+
+        onProgress(100, 'Activating');
+        try { await ctl.writeControl([OP_ACTIVATE_RESET]); } catch { /* reboots, no response */ }
+      } finally {
+        await ctl.stop();
+        try { await BleClient.disconnect(bootloaderId); } catch { /* bootloader reboots into new app */ }
       }
       return;
     } catch (e) {
@@ -361,5 +341,5 @@ export async function runSecureDfu(
       await sleep(800);
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  throw lastErr instanceof Error ? lastErr : new Error('DFU transfer failed.');
 }

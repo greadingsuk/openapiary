@@ -1,8 +1,8 @@
-// OTA firmware over BLE (Nordic Secure DFU).
+// OTA firmware over BLE (legacy Nordic DFU — Adafruit nRF52 bootloader).
 //
-// The XIAO nRF52840 runs the Adafruit bootloader, which exposes Nordic
-// buttonless Secure DFU; the firmware adds BLEDfu so the app can trigger an
-// update during the scale's pairing window. This module:
+// The XIAO nRF52840 runs the Adafruit bootloader, which exposes the *legacy*
+// Nordic DFU service (00001530); the firmware adds BLEDfu so the app can
+// trigger an update during the scale's connectable window. This module:
 //   1. fetches release metadata from the Worker (never GitHub directly),
 //   2. downloads the DFU .zip through the Worker (authenticated),
 //   3. checks the download's sha256 against the manifest (integrity),
@@ -21,7 +21,7 @@ import { unzipSync } from 'fflate';
 import { loadSettings } from './settings';
 import { getLatestFirmware, downloadFirmwareBytes, type FirmwareInfo } from './api';
 import { findDeviceId } from './ble';
-import { triggerButtonlessDfu, DfuTriggerError, findBootloader, runSecureDfu, type DfuProgress } from './dfu';
+import { triggerButtonlessDfu, DfuTriggerError, findBootloader, runLegacyDfu, type DfuProgress } from './dfu';
 
 export type { FirmwareInfo } from './api';
 export type { DfuProgress } from './dfu';
@@ -155,6 +155,6 @@ export async function updateFirmware(
   }
 
   // 3. Reconnect to the bootloader and transfer.
-  const bootloaderId = await findBootloader(20000);
-  await runSecureDfu(bootloaderId, pkg, onProgress);
+  const bootloaderId = await findBootloader(25000);
+  await runLegacyDfu(bootloaderId, pkg, onProgress);
 }
