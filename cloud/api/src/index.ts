@@ -526,7 +526,7 @@ app.post("/v1/readings", async (c) => {
 app.get("/v1/hives", async (c) => {
     const user = c.get("user");
     const { results } = await c.env.DB.prepare(
-        `SELECT id, name, created_at, public, lat, lon, region
+        `SELECT id, name, created_at, public, lat, lon, region, apiary
          FROM hives WHERE user_id = ? ORDER BY created_at DESC`
     )
         .bind(user.id)
@@ -603,7 +603,7 @@ app.patch("/v1/hives/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
     const body = await c.req
-        .json<{ name?: string; public?: 0 | 1; lat?: number; lon?: number; region?: string }>()
+        .json<{ name?: string; public?: 0 | 1; lat?: number; lon?: number; region?: string; apiary?: string }>()
         .catch(() => ({}));
 
     const owner = await c.env.DB.prepare(`SELECT user_id FROM hives WHERE id = ?`)
@@ -617,7 +617,8 @@ app.patch("/v1/hives/:id", async (c) => {
              public = COALESCE(?, public),
              lat    = COALESCE(?, lat),
              lon    = COALESCE(?, lon),
-             region = COALESCE(?, region)
+             region = COALESCE(?, region),
+             apiary = COALESCE(?, apiary)
          WHERE id = ?`
     )
         .bind(
@@ -626,6 +627,7 @@ app.patch("/v1/hives/:id", async (c) => {
             body.lat ?? null,
             body.lon ?? null,
             body.region ?? null,
+            body.apiary ?? null,
             id
         )
         .run();

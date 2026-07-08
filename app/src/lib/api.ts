@@ -16,6 +16,10 @@ export interface HiveSummary {
   name: string;
   created_at: number;
   public: number;
+  region?: string | null;
+  lat?: number | null;
+  lon?: number | null;
+  apiary?: string | null;
 }
 
 export interface HiveReading {
@@ -150,7 +154,7 @@ export async function deleteReadingsByTimestamp(
 export async function patchHive(
   s: Settings,
   hiveId: string,
-  patch: { name?: string; region?: string; lat?: number; lon?: number },
+  patch: { name?: string; region?: string; lat?: number; lon?: number; apiary?: string },
 ): Promise<void> {
   const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}`, {
     method: 'PATCH',

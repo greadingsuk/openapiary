@@ -143,7 +143,7 @@ const HiveDetailPage: React.FC = () => {
       const meta = apiaryMeta(ap, target);
       const s = await loadSettings();
       if (s.apiKey && (typeof navigator === 'undefined' || navigator.onLine)) {
-        await patchHive(s, id, { region: meta.location || target, lat: meta.lat, lon: meta.lon });
+        await patchHive(s, id, { apiary: target, region: meta.location || target, lat: meta.lat, lon: meta.lon });
       }
     } catch { /* offline — region syncs next time */ }
     setToast(`Moved to ${target}`);

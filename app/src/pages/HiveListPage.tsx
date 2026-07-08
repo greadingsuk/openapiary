@@ -9,12 +9,12 @@ import {
   swapVerticalOutline, fileTrayFullOutline, syncOutline,
 } from 'ionicons/icons';
 import { useState } from 'react';
-import { listHives } from '../lib/api';
+import { listHives, patchHive } from '../lib/api';
 import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
-import { loadApiaries, apiaryOf, apiaryNames, upsertApiary, setHiveApiary, type ApiaryStore } from '../lib/apiaries';
+import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, upsertApiary, setHiveApiary, seedApiariesFromCloud, type ApiaryStore } from '../lib/apiaries';
 import { syncNearbyKnownHives } from '../lib/nearbySync';
 import NewApiaryModal from '../components/NewApiaryModal';
 import { StatusDot, EmptyState, ErrorState, ListSkeleton } from '../components/ui';
@@ -57,6 +57,8 @@ const HiveListPage: React.FC = () => {
           const byId = new Map(localHives.map((h) => [h.id, h]));
           for (const c of cloud) byId.set(c.id, { id: c.id, name: c.name, created_at: c.created_at });
           setHives([...byId.values()]);
+          // Restore apiary grouping from the cloud (survives reinstall).
+          setApiaries(await seedApiariesFromCloud(cloud));
         }
       }
     } catch (e) {
@@ -75,17 +77,27 @@ const HiveListPage: React.FC = () => {
 
   async function assignHiveToApiary(hiveId: string, apiary: string) {
     await setHiveApiary(hiveId, apiary);
-    setApiaries(await loadApiaries());
+    const store = await loadApiaries();
+    setApiaries(store);
+    // Persist the assignment to the cloud so it survives reinstall.
+    try {
+      const s = await loadSettings();
+      if (s.apiKey && (typeof navigator === 'undefined' || navigator.onLine)) {
+        const meta = apiaryMeta(store, apiary);
+        await patchHive(s, hiveId, { apiary, region: meta.location, lat: meta.lat, lon: meta.lon });
+      }
+    } catch { /* offline — will re-sync on next assignment */ }
   }
 
   async function runNearbySync() {
     if (syncingNearby) return;
     setSyncingNearby(true);
+    setToast('Scanning for your scales (up to ~60s)…');
     try {
-      const r = await syncNearbyKnownHives();
+      const r = await syncNearbyKnownHives(65000, hives.map((h) => h.id));
       await load();
       const cloudBits = `${r.cloud.succeeded}/${r.cloud.attempted} uploaded`;
-      setToast(`Nearby sync complete: ${r.stored} reading(s) captured, ${cloudBits}.`);
+      setToast(`Scan complete: heard ${r.heard} scale(s), ${r.stored} reading(s) captured, ${cloudBits}.`);
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {

@@ -28,7 +28,7 @@ export type { DfuProgress } from './dfu';
 
 // Fallback "installed" version shown before we've heard a firmware-version advert
 // from the scale. Keep in sync with firmware/src/version.h (OA_FW_VERSION_STRING).
-export const CURRENT_BUILD = 'v1.0.2';
+export const CURRENT_BUILD = 'v1.0.3';
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Copy into a fresh ArrayBuffer-backed view to satisfy BufferSource typing.

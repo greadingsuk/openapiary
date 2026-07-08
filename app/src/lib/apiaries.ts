@@ -51,6 +51,33 @@ export async function setHiveApiary(hiveId: string, apiary: string): Promise<voi
   await saveApiaries(s);
 }
 
+/**
+ * Seed the local apiary store from cloud hives so apiary grouping survives an
+ * app reinstall. Only fills gaps — never clobbers a local assignment the user
+ * may have just made. Returns the updated store.
+ */
+export async function seedApiariesFromCloud(
+  hives: { id: string; apiary?: string | null; region?: string | null; lat?: number | null; lon?: number | null }[],
+): Promise<ApiaryStore> {
+  const s = await loadApiaries();
+  let changed = false;
+  for (const h of hives) {
+    const ap = (h.apiary ?? '').trim();
+    if (!ap) continue;
+    if (!(h.id in s.assign)) { s.assign[h.id] = ap; changed = true; }
+    if (!s.order.includes(ap)) { s.order.push(ap); changed = true; }
+    const cur = s.meta[ap] ?? {};
+    const merged: ApiaryMeta = {
+      location: cur.location ?? (h.region ?? undefined),
+      lat: cur.lat ?? (h.lat ?? undefined),
+      lon: cur.lon ?? (h.lon ?? undefined),
+    };
+    if (JSON.stringify(merged) !== JSON.stringify(cur)) { s.meta[ap] = merged; changed = true; }
+  }
+  if (changed) await saveApiaries(s);
+  return s;
+}
+
 export function apiaryOf(s: ApiaryStore, hiveId: string): string {
   return s.assign[hiveId] ?? UNASSIGNED;
 }
