@@ -196,7 +196,13 @@ export interface FirmwareInfo {
 
 /** Metadata for the newest published firmware (proxied from the private release). */
 export async function getLatestFirmware(s: Settings): Promise<FirmwareInfo> {
-  const r = await fetch(`${s.apiUrl}/v1/firmware/latest`, { headers: headers(s) });
+  // Always hit the origin: the endpoint sets a 5-minute Cache-Control, but a
+  // firmware version check must reflect a just-published release immediately.
+  const bust = `?t=${Date.now()}`;
+  const r = await fetch(`${s.apiUrl}/v1/firmware/latest${bust}`, {
+    headers: headers(s),
+    cache: 'no-store',
+  });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error ?? `GET /v1/firmware/latest ${r.status}`);
   return j as FirmwareInfo;
