@@ -12,7 +12,10 @@ import { latestReading } from '../lib/db';
 import { loadDeviceMeta, recordDeviceMeta } from '../lib/deviceMeta';
 
 const normVer = (v: string) => v.trim().toLowerCase().replace(/^v/, '');
-const BAT_RECOVERY_THRESHOLD_V = 3.3;
+// OTA is power-hungry and a mid-transfer failure can leave the scale advertising
+// in the bootloader and drain it flat, so require healthy headroom before we
+// even start (well above the firmware's own low-battery protection).
+const OTA_MIN_BATTERY_V = 3.6;
 
 const FirmwarePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -74,15 +77,15 @@ const FirmwarePage: React.FC = () => {
   const upToDate = !!latest && versionKnown && normVer(latest.version) === normVer(installed!);
   const busy = pct != null;
   const batteryKnown = batteryV != null;
-  const batteryTooLowForOta = batteryKnown && batteryV < BAT_RECOVERY_THRESHOLD_V;
+  const batteryTooLowForOta = batteryKnown && batteryV < OTA_MIN_BATTERY_V;
   const canStartUpdate = !!latest?.zip && !busy && !batteryTooLowForOta;
 
   async function run() {
     if (!latest) return;
     if (batteryTooLowForOta) {
       setToast(
-        `Battery is ${batteryV!.toFixed(2)} V. OTA is blocked below ${BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V. ` +
-        'Leave the scale in daylight to charge, then try again.',
+        `Battery is ${batteryV!.toFixed(2)} V. An update needs at least ${OTA_MIN_BATTERY_V.toFixed(1)} V so it can't run flat partway through. ` +
+        'Leave the scale in daylight (or on a charger) to top up, then try again.',
       );
       return;
     }
@@ -149,9 +152,9 @@ const FirmwarePage: React.FC = () => {
 
               {batteryTooLowForOta && (
                 <IonNote className="text-xs" style={{ color: 'var(--ion-color-warning)' }}>
-                  Battery is below {BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V. The scale firmware is in low-battery
-                  protection and may not enter update mode yet. Leave it in sunlight until battery recovers,
-                  then retry.
+                  Battery is below {OTA_MIN_BATTERY_V.toFixed(1)} V. Updating needs headroom so it can't run
+                  the scale flat partway through. Leave it in sunlight (or on a charger) until it's above
+                  {' '}{OTA_MIN_BATTERY_V.toFixed(1)} V, then retry.
                 </IonNote>
               )}
 

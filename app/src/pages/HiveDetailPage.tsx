@@ -37,7 +37,8 @@ const RANGE_MS: Record<'24h' | '7d' | '30d', number> = {
   '30d': 30 * 24 * 60 * 60 * 1000,
 };
 const EMPTY_KG = 18, FULL_KG = 60;
-const BAT_RECOVERY_THRESHOLD_V = 3.3;
+// Require battery headroom before allowing an OTA to start (see FirmwarePage).
+const OTA_MIN_BATTERY_V = 3.6;
 
 // Map RSSI (dBm) to a human-friendly signal rating.
 function signalRating(rssi?: number | null): { label: string; color: string } {
@@ -244,7 +245,7 @@ const HiveDetailPage: React.FC = () => {
   const fillPct = latest?.weight_kg != null
     ? Math.round(Math.max(0, Math.min(1, (latest.weight_kg - EMPTY_KG) / (FULL_KG - EMPTY_KG))) * 100)
     : null;
-  const batteryTooLowForOta = latest?.battery_v != null && latest.battery_v < BAT_RECOVERY_THRESHOLD_V;
+  const batteryTooLowForOta = latest?.battery_v != null && latest.battery_v < OTA_MIN_BATTERY_V;
 
   // Days present in the current range (local midnight keys, newest first).
   const availableDays = useMemo(() => {
@@ -353,8 +354,8 @@ const HiveDetailPage: React.FC = () => {
                     Battery is low for firmware updates
                   </span>
                   <span className="text-xs oa-muted">
-                    Current battery is {latest?.battery_v?.toFixed(2)} V. OTA updates are blocked below
-                    {' '}{BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V by the scale's low-battery protection.
+                    Current battery is {latest?.battery_v?.toFixed(2)} V. Updates are held until it's above
+                    {' '}{OTA_MIN_BATTERY_V.toFixed(1)} V so an update can't run the scale flat partway through.
                     Leave it in daylight to charge, then retry.
                   </span>
                 </div>
@@ -513,7 +514,7 @@ const HiveDetailPage: React.FC = () => {
                 if (batteryTooLowForOta) {
                   setToast(
                     `Battery is ${latest?.battery_v?.toFixed(2) ?? '--'} V. ` +
-                    `Charge above ${BAT_RECOVERY_THRESHOLD_V.toFixed(1)} V before OTA.`,
+                    `Charge above ${OTA_MIN_BATTERY_V.toFixed(1)} V before updating.`,
                   );
                 }
                 router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward');
