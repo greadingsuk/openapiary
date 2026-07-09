@@ -130,3 +130,54 @@ export async function patchHive(
   });
   if (!r.ok) throw new Error(`PATCH /v1/hives ${r.status}`);
 }
+
+// ---------------------------------------------------------------------------
+// Firmware (OTA)
+//
+// The binary lives on a private GitHub release fronted by the Worker; the app
+// only ever talks to the Worker (with its X-API-Key), never GitHub. The
+// manifest carries the sha256 + detached Ed25519 signature the app verifies
+// before flashing (see lib/ota.ts).
+// ---------------------------------------------------------------------------
+export interface FirmwareAsset {
+  name: string;
+  size: number;
+  downloadUrl: string;
+}
+
+export interface FirmwareManifest {
+  version?: string;
+  zip?: { name: string; size: number; sha256: string; sig: string };
+  uf2?: { name: string; size: number; sha256: string };
+  notes?: string;
+  createdAt?: number;
+}
+
+export interface FirmwareInfo {
+  version: string;
+  notes: string;
+  zip: FirmwareAsset | null;
+  uf2: FirmwareAsset | null;
+  manifest: FirmwareManifest | null;
+}
+
+/** Metadata for the newest published firmware (proxied from the private release). */
+export async function getLatestFirmware(s: Settings): Promise<FirmwareInfo> {
+  // Always hit the origin: the endpoint sets a 5-minute Cache-Control, but a
+  // firmware version check must reflect a just-published release immediately.
+  const bust = `?t=${Date.now()}`;
+  const r = await fetch(`${s.apiUrl}/v1/firmware/latest${bust}`, {
+    headers: headers(s),
+    cache: 'no-store',
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `GET /v1/firmware/latest ${r.status}`);
+  return j as FirmwareInfo;
+}
+
+/** Download a firmware asset's raw bytes through the Worker (authenticated). */
+export async function downloadFirmwareBytes(s: Settings, downloadUrl: string): Promise<Uint8Array> {
+  const r = await fetch(downloadUrl, { headers: { 'X-API-Key': s.apiKey } });
+  if (!r.ok) throw new Error(`firmware download failed (${r.status})`);
+  return new Uint8Array(await r.arrayBuffer());
+}

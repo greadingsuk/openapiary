@@ -50,6 +50,15 @@ const memDeletedReadings = new Map<string, Set<number>>();
 const memClearMarkers = new Map<string, number>();
 let useMemory = false;
 
+// Synchronous, race-free guard against the scale re-broadcasting the same
+// packet_id many times per advertising burst. insertReading is async and its
+// DB "is this packet already stored?" check is await-separated, so two advert
+// callbacks for the same packet can both pass it and each insert a row with a
+// Date.now() timestamp 1 ms apart (distinct under the (hive_id, ts) key).
+// Recording the last-seen packet_id synchronously — before any await — closes
+// that race. packet_id increments once per reading, so a repeat is a duplicate.
+const lastPacketByHive = new Map<string, number>();
+
 export interface Hive {
   id: string;
   name: string;
@@ -175,6 +184,12 @@ export async function upsertHive(h: Hive): Promise<void> {
 }
 
 export async function insertReading(r: Reading): Promise<void> {
+  // Race-free duplicate guard: runs before any await so two advert callbacks
+  // for the same packet in one tick can't both slip past. See lastPacketByHive.
+  if (r.packet_id != null) {
+    if (lastPacketByHive.get(r.hive_id) === r.packet_id) return;
+    lastPacketByHive.set(r.hive_id, r.packet_id);
+  }
   await initDb();
   if (useMemory) {
     if (isSuppressedInMemory(r.hive_id, r.ts)) return;
