@@ -1,7 +1,7 @@
 # OpenApiary — To-Do Plan
 
 > **Status**: Live working document. Supersedes the original `migration-plan.md`.
-> **Last updated**: 2026-06-08 (real sensors restored, SoftDevice traps documented, interval + naming + RTC plan added)
+> **Last updated**: 2026-07-09 (firmware OTA shipped + hardened end-to-end; flat 1-min cadence; see [firmware-ota.md](firmware-ota.md))
 > **Repo**: <https://github.com/greadingsuk/openapiary>
 > **Licence**: PolyForm Noncommercial 1.0.0
 
@@ -335,10 +335,30 @@ Staging URL: `https://oa-api-staging.grantjreadings.workers.dev`
 
 ---
 
+## 7a. Firmware OTA (over-the-air updates) — ✅ DONE & field-tested
+
+Full reference: **[firmware-ota.md](firmware-ota.md)**. Summary:
+
+- ✅ Legacy Nordic DFU client (Adafruit bootloader, service `00001530`) in
+  `app/src/lib/dfu.ts` — 20-byte packets, PRN=4 backpressure, INVALID_STATE
+  self-heal, bootloader resume.
+- ✅ Signed release pipeline (Ed25519 over the DFU zip, verified in the Worker;
+  app re-checks sha256). Release = `.zip` + `manifest.json` + `.uf2`.
+- ✅ Buttonless trigger + retry across wake windows; confirm-after-reboot;
+  keep-screen-awake; 3.6 V battery gate.
+- ✅ Plain-language Firmware page (instructions first, progress bar, release
+  notes, result cards).
+- ✅ USB `.uf2` recovery (double-tap reset → drag) as brick-proof fallback.
+- ✅ Verified end-to-end over BLE: v1.0.4 → 1.0.5 → 1.0.6 → 1.0.7 → 1.0.8.
+- ⏭️ Faster upload (MTU-sized packets) — deferred; unsafe on iOS via ATT MTU,
+  needs the real `writeWithoutResponse` limit.
+
+---
+
 ## 8. First-Light Checklist (run in order once hardware arrives)
 
 1. ⬜ `pio run -t upload` succeeds with XIAO in DFU mode (double-tap reset)
-2. ⬜ nRF Connect on phone sees `OA-XXXX` (or custom name) advertising with service-data UUID `0xFCD2` at the adaptive cadence (1 min day / 5 min night once time is seeded)
+2. ⬜ nRF Connect on phone sees `OA-XXXX` (or custom name) advertising with service-data UUID `0xFCD2` at the flat 1-minute cadence
 3. ⬜ nRF Connect (or Home Assistant) decodes weight + battery from BTHome service data
 4. ⬜ Home Assistant auto-discovers the device under Settings → Devices
 5. ⬜ Cal CLI works over USB: `tare`, `cal 5` (5 kg known weight), `show`
