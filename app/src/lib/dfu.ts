@@ -36,17 +36,21 @@ const OP_INIT_DFU = 0x02;
 const OP_RECEIVE_IMAGE = 0x03;
 const OP_VALIDATE = 0x04;
 const OP_ACTIVATE_RESET = 0x05;
+const OP_SYS_RESET = 0x06;
 const OP_PRN_REQUEST = 0x08;
 const OP_RESPONSE = 0x10;
 const RES_SUCCESS = 0x01;
+const RES_INVALID_STATE = 0x02;
 
 const IMG_APPLICATION = 0x04; // START_DFU image type: application only
 
-// BLE min-MTU-safe packet chunk. The plugin has no packet-receipt flow control
-// of its own, so we use the DFU protocol's packet-receipt notifications (PRN)
-// to pace the stream instead.
+// BLE min-MTU-safe packet chunk. The bootloader receives firmware packets into a
+// small fixed RX buffer pool (hci_mem_pool) and drains it as it writes flash;
+// blasting too many packets before it drains overflows the pool and aborts with
+// OPERATION_FAILED. We use the DFU protocol's packet-receipt notifications (PRN)
+// as backpressure with a SMALL interval so we never outrun the pool.
 const PACKET_CHUNK = 20;
-const PRN_INTERVAL = 12; // request a receipt every N packets (~240 bytes)
+const PRN_INTERVAL = 4; // wait for a receipt every N packets (~80 bytes)
 
 export interface DfuInput {
   initPacket: Uint8Array; // firmware.dat (legacy init packet)
@@ -237,109 +241,114 @@ function checkResponse(dv: DataView, expectedOp: number): void {
 }
 
 /**
- * Run the legacy DFU byte transfer against a bootloader deviceId. Retries the
- * connection a few times because the bootloader advert can take a moment to
- * appear and the first connect after a reboot occasionally races the stack.
+ * Run the legacy DFU byte transfer against a bootloader deviceId. The initial
+ * CONNECT is retried (the post-reboot advert can race the stack), but the
+ * transfer itself is a single pass: retrying a partial transfer would hit the
+ * bootloader mid-session and get INVALID_STATE, so instead we surface a clear
+ * error and (when stuck) reset the bootloader so the next attempt starts clean.
  */
 export async function runLegacyDfu(
   bootloaderId: string,
   input: DfuInput,
   onProgress: DfuProgress,
 ): Promise<void> {
+  // Connect with a few retries for the post-reboot advertising race.
+  let connected = false;
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let c = 0; c < 4 && !connected; c++) {
     try {
       await BleClient.connect(bootloaderId, () => undefined, { timeout: 12000 });
       try { await BleClient.discoverServices(bootloaderId); } catch { /* best effort */ }
-      const ctl = new DfuControl(bootloaderId);
-      try {
-        await ctl.start();
-        onProgress(0, 'Preparing');
-
-        const bin = input.firmware;
-        const total = bin.length;
-
-        // 1. START_DFU (application) + image sizes [sd=0, bl=0, app=len].
-        let ev = ctl.armNext(30000);
-        await ctl.writeControl([OP_START_DFU, IMG_APPLICATION]);
-        const sizes = new Uint8Array(12);
-        sizes.set(u32le(0), 0);                     // softdevice size
-        sizes.set(u32le(0), 4);                     // bootloader size
-        sizes.set(u32le(total), 8);                 // application size
-        await ctl.writePacket(sizes);
-        checkResponse(await ev, OP_START_DFU);
-
-        // 2. Init packet (.dat): begin -> stream -> complete.
-        onProgress(0, 'Sending init packet');
-        await ctl.writeControl([OP_INIT_DFU, 0x00]); // receive init packet
-        await ctl.writePacket(input.initPacket);
-        ev = ctl.armNext();
-        await ctl.writeControl([OP_INIT_DFU, 0x01]); // init packet complete
-        checkResponse(await ev, OP_INIT_DFU);
-
-        // 3. Configure packet-receipt notifications for flow control.
-        await ctl.writeControl([OP_PRN_REQUEST, PRN_INTERVAL & 0xff, (PRN_INTERVAL >> 8) & 0xff]);
-
-        // 4. Start receiving the firmware image. The bootloader ERASES the
-        //    target flash bank now, which is slow (~90ms per 4KB page) and
-        //    blocking — if we stream during the erase its receive buffers
-        //    overflow and it aborts with OPERATION_FAILED. Wait for the erase
-        //    to finish (scaled to image size) before sending any data.
-        await ctl.writeControl([OP_RECEIVE_IMAGE]);
-        const pages = Math.ceil(total / 4096);
-        const eraseMs = Math.min(12000, Math.max(2000, pages * 110 + 800));
-        onProgress(0, 'Preparing flash');
-        await sleep(eraseMs);
-
-        // 5. Stream the image with PRN pacing. We arm a waiter before the packet
-        //    that triggers a receipt (or the final completion response), so an
-        //    early error response is surfaced immediately instead of hanging.
-        onProgress(0, 'Uploading');
-        let sent = 0;
-        let sinceReceipt = 0;
-        let finalEv: Promise<DataView> | null = null;
-        while (sent < total) {
-          const len = Math.min(PACKET_CHUNK, total - sent);
-          const isLast = sent + len >= total;
-          const atBatch = sinceReceipt + 1 >= PRN_INTERVAL && !isLast;
-          let ev2: Promise<DataView> | null = null;
-          if (isLast) finalEv = ctl.armNext(30000);
-          else if (atBatch) ev2 = ctl.armNext(20000);
-
-          await BleClient.writeWithoutResponse(
-            bootloaderId, DFU_SERVICE, DFU_PACKET, toDataView(bin.subarray(sent, sent + len)),
-          );
-          sent += len;
-          sinceReceipt++;
-
-          if (ev2) {
-            const dv = await ev2;
-            // A response (0x10) here means the bootloader aborted early.
-            if (dv.getUint8(0) === OP_RESPONSE) checkResponse(dv, OP_RECEIVE_IMAGE);
-            sinceReceipt = 0;
-          }
-          onProgress(Math.round((sent / total) * 100), 'Uploading');
-        }
-
-        checkResponse(await (finalEv ?? ctl.armNext(30000)), OP_RECEIVE_IMAGE);
-
-        // 6. Validate, then activate & reset (device reboots into the new app).
-        onProgress(100, 'Verifying');
-        ev = ctl.armNext();
-        await ctl.writeControl([OP_VALIDATE]);
-        checkResponse(await ev, OP_VALIDATE);
-
-        onProgress(100, 'Activating');
-        try { await ctl.writeControl([OP_ACTIVATE_RESET]); } catch { /* reboots, no response */ }
-      } finally {
-        await ctl.stop();
-        try { await BleClient.disconnect(bootloaderId); } catch { /* bootloader reboots into new app */ }
-      }
-      return;
+      connected = true;
     } catch (e) {
       lastErr = e;
       await sleep(800);
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error('DFU transfer failed.');
+  if (!connected) {
+    throw lastErr instanceof Error ? lastErr : new Error('Could not connect to the updater.');
+  }
+
+  const ctl = new DfuControl(bootloaderId);
+  try {
+    await ctl.start();
+    onProgress(0, 'Preparing');
+
+    const bin = input.firmware;
+    const total = bin.length;
+
+    // 1. START_DFU (application) + image sizes [sd=0, bl=0, app=len]. The
+    //    bootloader erases the target bank during this step and only replies
+    //    once it's ready, so no separate erase wait is needed.
+    let ev = ctl.armNext(30000);
+    await ctl.writeControl([OP_START_DFU, IMG_APPLICATION]);
+    const sizes = new Uint8Array(12);
+    sizes.set(u32le(0), 0);
+    sizes.set(u32le(0), 4);
+    sizes.set(u32le(total), 8);
+    await ctl.writePacket(sizes);
+    const startResp = await ev;
+    if (startResp.getUint8(0) === OP_RESPONSE && startResp.getUint8(2) === RES_INVALID_STATE) {
+      // The bootloader is stuck mid-session from a previous partial attempt.
+      // Reset it so it reboots clean; the next update starts fresh.
+      try { await ctl.writeControl([OP_SYS_RESET]); } catch { /* reboots */ }
+      throw new Error("The scale's updater was still busy from a previous attempt, so it has been reset. Wait ~20s for the scale to reappear, then tap Update again.");
+    }
+    checkResponse(startResp, OP_START_DFU);
+
+    // 2. Init packet (.dat): begin -> stream -> complete.
+    onProgress(0, 'Sending init packet');
+    await ctl.writeControl([OP_INIT_DFU, 0x00]);
+    await ctl.writePacket(input.initPacket);
+    ev = ctl.armNext();
+    await ctl.writeControl([OP_INIT_DFU, 0x01]);
+    checkResponse(await ev, OP_INIT_DFU);
+
+    // 3. Enable packet-receipt notifications (backpressure) and start receiving.
+    await ctl.writeControl([OP_PRN_REQUEST, PRN_INTERVAL & 0xff, (PRN_INTERVAL >> 8) & 0xff]);
+    await ctl.writeControl([OP_RECEIVE_IMAGE]);
+
+    // 4. Stream the image, pausing every PRN_INTERVAL packets for a receipt so
+    //    we never overrun the bootloader's RX buffer pool. An early error
+    //    response is surfaced immediately.
+    onProgress(0, 'Uploading');
+    let sent = 0;
+    let sinceReceipt = 0;
+    let finalEv: Promise<DataView> | null = null;
+    while (sent < total) {
+      const len = Math.min(PACKET_CHUNK, total - sent);
+      const isLast = sent + len >= total;
+      const atBatch = sinceReceipt + 1 >= PRN_INTERVAL && !isLast;
+      let ev2: Promise<DataView> | null = null;
+      if (isLast) finalEv = ctl.armNext(30000);
+      else if (atBatch) ev2 = ctl.armNext(20000);
+
+      await BleClient.writeWithoutResponse(
+        bootloaderId, DFU_SERVICE, DFU_PACKET, toDataView(bin.subarray(sent, sent + len)),
+      );
+      sent += len;
+      sinceReceipt++;
+
+      if (ev2) {
+        const dv = await ev2;
+        if (dv.getUint8(0) === OP_RESPONSE) checkResponse(dv, OP_RECEIVE_IMAGE); // early abort
+        sinceReceipt = 0;
+      }
+      onProgress(Math.round((sent / total) * 100), 'Uploading');
+    }
+
+    checkResponse(await (finalEv ?? ctl.armNext(30000)), OP_RECEIVE_IMAGE);
+
+    // 5. Validate, then activate & reset (device reboots into the new app).
+    onProgress(100, 'Verifying');
+    ev = ctl.armNext();
+    await ctl.writeControl([OP_VALIDATE]);
+    checkResponse(await ev, OP_VALIDATE);
+
+    onProgress(100, 'Activating');
+    try { await ctl.writeControl([OP_ACTIVATE_RESET]); } catch { /* reboots, no response */ }
+  } finally {
+    await ctl.stop();
+    try { await BleClient.disconnect(bootloaderId); } catch { /* bootloader reboots into new app */ }
+  }
 }
