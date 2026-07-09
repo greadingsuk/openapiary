@@ -155,12 +155,12 @@ export async function updateFirmware(
 
     if (!triggered) {
       if (!heardScale) {
-        throw new Error('Scale not found. Keep the phone within a metre of the scale and make sure it has power — it becomes reachable on each heartbeat (about every 60s).');
+        throw new Error("Couldn't find the scale. Stand within a metre of it and make sure it has power, then try again. (It wakes up to listen about once a minute, so give it a moment.)");
       }
       if (lastErr instanceof DfuTriggerError && lastErr.code === 'service-missing') {
-        throw new Error("Your phone can't see the scale's wireless-update service. Turn the phone's Bluetooth fully off and on (or restart the phone), then try again with the scale close.");
+        throw new Error("Your phone couldn't connect to the scale for the update. Turn the phone's Bluetooth off and on, then try again with the scale close.");
       }
-      throw new Error('Could not start the update — the scale kept dropping the connection. Move the phone right next to the scale, keep the app open, and try again.');
+      throw new Error("Couldn't stay connected to the scale. Move the phone right next to it, keep this screen open, and try again.");
     }
 
     // 3. Reconnect to the bootloader.

@@ -254,19 +254,17 @@ export async function runLegacyDfu(
 ): Promise<void> {
   // Connect with a few retries for the post-reboot advertising race.
   let connected = false;
-  let lastErr: unknown;
   for (let c = 0; c < 4 && !connected; c++) {
     try {
       await BleClient.connect(bootloaderId, () => undefined, { timeout: 12000 });
       try { await BleClient.discoverServices(bootloaderId); } catch { /* best effort */ }
       connected = true;
-    } catch (e) {
-      lastErr = e;
+    } catch {
       await sleep(800);
     }
   }
   if (!connected) {
-    throw lastErr instanceof Error ? lastErr : new Error('Could not connect to the updater.');
+    throw new Error("Couldn't connect to the scale to finish the update. Stand right next to it and try again.");
   }
 
   const ctl = new DfuControl(bootloaderId);
