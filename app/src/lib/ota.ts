@@ -20,7 +20,7 @@ import { Capacitor } from '@capacitor/core';
 import { unzipSync } from 'fflate';
 import { loadSettings } from './settings';
 import { getLatestFirmware, downloadFirmwareBytes, type FirmwareInfo } from './api';
-import { findDeviceId } from './ble';
+import { findDeviceId, readAdvertOnce } from './ble';
 import { triggerButtonlessDfu, DfuTriggerError, findBootloader, runLegacyDfu, type DfuProgress } from './dfu';
 
 export type { FirmwareInfo } from './api';
@@ -29,7 +29,7 @@ export type { DfuProgress } from './dfu';
 // Reference "current" build for this app release. Keep in sync with
 // firmware/src/version.h (OA_FW_VERSION_STRING). No longer used as a fallback
 // "installed" version — the Firmware screen only trusts the scale's advert.
-export const CURRENT_BUILD = 'v1.0.6';
+export const CURRENT_BUILD = 'v1.0.7';
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Copy into a fresh ArrayBuffer-backed view to satisfy BufferSource typing.
@@ -97,14 +97,14 @@ export async function updateFirmware(
   deviceName: string,
   latest: FirmwareInfo,
   onProgress: DfuProgress,
-): Promise<void> {
+): Promise<{ confirmedVersion: string | null }> {
   // Browser dev: no BLE — simulate so the flow is testable.
   if (!Capacitor.isNativePlatform()) {
     for (let p = 0; p <= 100; p += 5) {
       await new Promise((r) => setTimeout(r, 120));
       onProgress(p, p < 100 ? 'Uploading' : 'Done');
     }
-    return;
+    return { confirmedVersion: latest.version };
   }
 
   if (!latest.zip?.downloadUrl) throw new Error('No firmware package is available to install.');
@@ -113,7 +113,7 @@ export async function updateFirmware(
   onProgress(0, 'Downloading');
   const s = await loadSettings();
   const zip = await downloadFirmwareBytes(s, latest.zip.downloadUrl);
-  onProgress(0, 'Verifying');
+  onProgress(0, 'Checking download');
   await verifyPackage(zip, latest);
   const pkg = unpackDfuZip(zip);
 
@@ -169,4 +169,22 @@ export async function updateFirmware(
 
   // 4. Transfer the firmware.
   await runLegacyDfu(bootloaderId, pkg, onProgress);
+
+  // 5. Confirm the scale rebooted onto the new version (close the loop). We
+  //    listen for its advert and check the version it broadcasts; success is
+  //    only reported once we've actually heard the new build.
+  onProgress(100, 'Confirming update');
+  const want = latest.version.trim().toLowerCase().replace(/^v/, '');
+  const confirmDeadline = Date.now() + 90000;
+  let confirmedVersion: string | null = null;
+  while (Date.now() < confirmDeadline) {
+    const a = await readAdvertOnce(deviceName, Math.min(65000, confirmDeadline - Date.now()));
+    if (a?.fwVersion) {
+      const got = a.fwVersion.trim().toLowerCase().replace(/^v/, '');
+      if (got === want) { confirmedVersion = a.fwVersion; break; }
+      // Heard an older version — it may still be rebooting; keep listening.
+    }
+  }
+  onProgress(100, confirmedVersion ? 'Done' : 'Installed');
+  return { confirmedVersion };
 }

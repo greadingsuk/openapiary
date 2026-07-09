@@ -11,7 +11,7 @@
 
 #define OA_FW_MAJOR 1
 #define OA_FW_MINOR 0
-#define OA_FW_PATCH 6
+#define OA_FW_PATCH 7
 
 #define OA_FW_STR2(x) #x
 #define OA_FW_STR(x)  OA_FW_STR2(x)

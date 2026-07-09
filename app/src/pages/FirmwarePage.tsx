@@ -1,29 +1,53 @@
 import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonBackButton,
-  IonButtons, IonButton, IonIcon, IonProgressBar, IonToast, IonNote, useIonViewWillEnter,
+  IonButtons, IonButton, IonIcon, IonProgressBar, IonToast, useIonViewWillEnter,
 } from '@ionic/react';
-import { hardwareChipOutline, checkmarkCircle, cloudDownloadOutline, warningOutline } from 'ionicons/icons';
+import {
+  hardwareChipOutline, checkmarkCircle, cloudDownloadOutline, warningOutline,
+  chevronForwardOutline, chevronDownOutline, locationOutline, phonePortraitOutline,
+  timeOutline, batteryHalfOutline, sparklesOutline,
+} from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
+import { KeepAwake } from '@capacitor-community/keep-awake';
 import { latestFirmware, updateFirmware, type FirmwareInfo } from '../lib/ota';
 import { readAdvertOnce } from '../lib/ble';
 import { latestReading } from '../lib/db';
 import { loadDeviceMeta, recordDeviceMeta } from '../lib/deviceMeta';
 
 const normVer = (v: string) => v.trim().toLowerCase().replace(/^v/, '');
-// OTA is power-hungry and a mid-transfer failure can leave the scale advertising
-// in the bootloader and drain it flat, so require healthy headroom before we
-// even start (well above the firmware's own low-battery protection).
+// An update is power-hungry, so require healthy battery headroom before we start
+// (well above the firmware's own low-battery protection).
 const OTA_MIN_BATTERY_V = 3.6;
+
+// Turn the internal progress phases into plain, friendly words.
+function phaseLabel(phase: string): string {
+  switch (phase) {
+    case 'Downloading': return 'Downloading update';
+    case 'Checking download': return 'Checking the download';
+    case 'Waiting for scale': return 'Waiting for the scale';
+    case 'Entering update mode': return 'Getting the scale ready';
+    case 'Preparing':
+    case 'Sending init packet': return 'Getting ready';
+    case 'Uploading': return 'Installing';
+    case 'Verifying':
+    case 'Activating': return 'Finishing up';
+    case 'Confirming update': return 'Confirming';
+    case 'Done':
+    case 'Installed': return 'Done';
+    default: return phase || 'Working';
+  }
+}
+
+type Result =
+  | { ok: true; version: string; confirmed: boolean }
+  | { ok: false; message: string };
 
 const FirmwarePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const deviceName = id.toUpperCase();
   const [latest, setLatest] = useState<FirmwareInfo | null>(null);
-  // Installed version is unknown until we hear it from the scale (advert) or
-  // recall a previously-seen value (deviceMeta). Never assume the app's own
-  // build number — that produced a false "up to date".
   const [installed, setInstalled] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -31,45 +55,34 @@ const FirmwarePage: React.FC = () => {
   const [phase, setPhase] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [batteryV, setBatteryV] = useState<number | null>(null);
-  const [charging, setCharging] = useState<boolean | null>(null);
-  const [batterySource, setBatterySource] = useState<'live' | 'cache' | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   useIonViewWillEnter(() => {
     setLoadError(null);
     setChecking(true);
+    setResult(null);
     void latestFirmware().then(setLatest).catch((e) =>
       setLoadError(e instanceof Error ? e.message : String(e)),
     );
-    // Recall the last version we heard from this scale so we show something
-    // truthful immediately, before the (slower) live advert read.
     void loadDeviceMeta().then((store) => {
       const fw = store[id.toLowerCase()]?.fw;
       if (fw) setInstalled((cur) => cur ?? fw);
     }).catch(() => undefined);
-    // Read the installed version straight from the scale's advert (passive,
-    // authoritative). Persist it so the Fleet screen and next visit agree.
     if (Capacitor.isNativePlatform()) {
       void readAdvertOnce(deviceName, 6000).then((a) => {
         if (a?.fwVersion) {
           setInstalled(a.fwVersion);
           void recordDeviceMeta(id, { fw: a.fwVersion });
         }
-        if (typeof a?.batteryV === 'number') {
-          setBatteryV(a.batteryV);
-          setBatterySource('live');
-        }
-        if (typeof a?.charging === 'boolean') {
-          setCharging(a.charging);
-        }
+        if (typeof a?.batteryV === 'number') setBatteryV(a.batteryV);
       }).catch(() => undefined).finally(() => setChecking(false));
     } else {
       setChecking(false);
     }
-    // Fallback: if we didn't hear a live advert, use the latest cached reading.
     void latestReading(id).then((r) => {
       if (!r) return;
       setBatteryV((cur) => (cur == null && r.battery_v != null ? r.battery_v : cur));
-      setBatterySource((cur) => (cur ?? (r.battery_v != null ? 'cache' : null)));
     }).catch(() => undefined);
   });
 
@@ -77,28 +90,32 @@ const FirmwarePage: React.FC = () => {
   const upToDate = !!latest && versionKnown && normVer(latest.version) === normVer(installed!);
   const busy = pct != null;
   const batteryKnown = batteryV != null;
-  const batteryTooLowForOta = batteryKnown && batteryV < OTA_MIN_BATTERY_V;
-  const canStartUpdate = !!latest?.zip && !busy && !batteryTooLowForOta;
+  const batteryTooLow = batteryKnown && batteryV < OTA_MIN_BATTERY_V;
+  const canStartUpdate = !!latest?.zip && !busy && !batteryTooLow;
 
   async function run() {
     if (!latest) return;
-    if (batteryTooLowForOta) {
-      setToast(
-        `Battery is ${batteryV!.toFixed(2)} V. An update needs at least ${OTA_MIN_BATTERY_V.toFixed(1)} V so it can't run flat partway through. ` +
-        'Leave the scale in daylight (or on a charger) to top up, then try again.',
-      );
+    if (batteryTooLow) {
+      setToast("The scale's battery is a bit low to update safely. Leave it in daylight or on a charger for a while, then try again.");
       return;
     }
+    setResult(null);
     setPct(0);
     setPhase('Starting');
+    if (Capacitor.isNativePlatform()) { try { await KeepAwake.keepAwake(); } catch { /* best effort */ } }
     try {
-      await updateFirmware(deviceName, latest, (p, ph) => { setPct(p); setPhase(ph); });
-      setToast('Firmware updated. The scale is restarting on the new version.');
-      setInstalled(latest.version);
+      const { confirmedVersion } = await updateFirmware(
+        deviceName, latest, (p, ph) => { setPct(p); setPhase(ph); },
+      );
+      const v = confirmedVersion ?? latest.version;
+      setInstalled(v);
+      if (Capacitor.isNativePlatform()) void recordDeviceMeta(id, { fw: v });
+      setResult({ ok: true, version: v, confirmed: !!confirmedVersion });
     } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
+      setResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
       setPct(null);
+      if (Capacitor.isNativePlatform()) { try { await KeepAwake.allowSleep(); } catch { /* best effort */ } }
     }
   }
 
@@ -107,117 +124,174 @@ const FirmwarePage: React.FC = () => {
       <IonHeader>
         <IonToolbar>
           <IonButtons slot="start"><IonBackButton defaultHref="/hives" /></IonButtons>
-          <IonTitle>Firmware</IonTitle>
+          <IonTitle>Software update</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent>
         <div className="px-4 py-4 flex flex-col gap-4">
+
+          {/* Status hero */}
           <div className="oa-card p-5 flex flex-col items-center gap-2">
             <IonIcon icon={hardwareChipOutline} style={{ fontSize: 40, color: 'var(--oa-honey-600)' }} />
-            <span className="text-sm oa-muted">Installed on {deviceName}</span>
+            <span className="text-sm oa-muted">Your hive scale ({deviceName})</span>
             <span className="oa-numeral text-2xl font-bold" style={{ color: 'var(--oa-ink)' }}>
-              {installed ?? (checking ? 'Checking…' : 'Unknown')}
+              {installed ?? (checking ? 'Checking…' : 'Not heard yet')}
             </span>
             {!versionKnown && !checking && (
               <span className="text-xs oa-subtle text-center">
-                Couldn't hear the scale. Bring it within range and reopen this screen.
+                We couldn't hear the scale. Bring the phone close and reopen this screen.
               </span>
             )}
           </div>
 
-          {loadError ? (
-            <div className="oa-card p-4 flex items-center gap-2">
-              <IonIcon icon={warningOutline} style={{ color: 'var(--ion-color-warning)', fontSize: 22 }} />
-              <span className="text-sm oa-muted">Couldn't check for updates: {loadError}</span>
-            </div>
-          ) : upToDate ? (
-            <div className="oa-card p-4 flex items-center gap-2">
-              <IonIcon icon={checkmarkCircle} style={{ color: 'var(--ion-color-success)', fontSize: 22 }} />
-              <span style={{ color: 'var(--oa-ink)' }}>Up to date</span>
-            </div>
-          ) : latest && (
-            <div className="oa-card p-4 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>{latest.version} available</span>
-                <span className="text-xs oa-subtle">{installed ?? 'unknown'} → {latest.version}</span>
-              </div>
-              {latest.notes && <p className="text-sm oa-muted whitespace-pre-line">{latest.notes}</p>}
-
-              <div className="text-xs oa-muted">
-                Battery pre-check:{' '}
-                {batteryKnown
-                  ? `${batteryV!.toFixed(2)} V${charging == null ? '' : charging ? ' · charging' : ' · not charging'}${batterySource ? ` · ${batterySource}` : ''}`
-                  : 'unknown'}
-              </div>
-
-              {batteryTooLowForOta && (
-                <IonNote className="text-xs" style={{ color: 'var(--ion-color-warning)' }}>
-                  Battery is below {OTA_MIN_BATTERY_V.toFixed(1)} V. Updating needs headroom so it can't run
-                  the scale flat partway through. Leave it in sunlight (or on a charger) until it's above
-                  {' '}{OTA_MIN_BATTERY_V.toFixed(1)} V, then retry.
-                </IonNote>
-              )}
-
-              {!busy ? (
+          {/* Outcome of a just-finished update */}
+          {result && (
+            <div className="oa-card p-5 flex flex-col items-center gap-3 text-center">
+              {result.ok ? (
                 <>
-                  <div
-                    className="p-4 rounded-xl flex flex-col gap-2"
-                    style={{
-                      background: 'var(--oa-honey-50, #fdf6e3)',
-                      border: '2px solid var(--oa-honey-400)',
-                      marginTop: 6,
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <IonIcon icon={warningOutline} style={{ color: 'var(--oa-honey-700)', fontSize: 22 }} />
-                      <span className="font-bold text-base" style={{ color: 'var(--oa-ink)' }}>
-                        Read this before you tap update
-                      </span>
-                    </div>
-                    <ol className="text-sm flex flex-col gap-2 pl-5 list-decimal" style={{ color: 'var(--oa-ink)' }}>
-                      <li><strong>Stand right next to the scale</strong> (within arm's reach) and stay there for the whole update.</li>
-                      <li><strong>Keep this screen open</strong> — don't lock the phone or switch apps until it says it's done.</li>
-                      <li>The scale only wakes to listen <strong>once a minute</strong>, so it can take a minute or two to begin — this is normal, please wait.</li>
-                      <li>If it drops out, <strong>the scale can't be damaged</strong> — it waits safely in update mode. Just tap update again.</li>
-                    </ol>
-                  </div>
-                  <IonButton expand="block" onClick={run} className="ion-margin-top" disabled={!canStartUpdate} style={{ '--padding-top': '18px', '--padding-bottom': '18px' } as React.CSSProperties}>
-                    <IonIcon slot="start" icon={cloudDownloadOutline} /> Update over Bluetooth
-                  </IonButton>
+                  <IonIcon icon={checkmarkCircle} style={{ fontSize: 44, color: 'var(--ion-color-success)' }} />
+                  <span className="text-lg font-bold" style={{ color: 'var(--oa-ink)' }}>
+                    {result.confirmed ? `Updated to ${result.version}` : 'Update sent'}
+                  </span>
+                  <span className="text-sm oa-muted">
+                    {result.confirmed
+                      ? 'Your scale is now running the latest software.'
+                      : `The scale is restarting and should show ${result.version} in a moment.`}
+                  </span>
+                  <IonButton fill="clear" onClick={() => setResult(null)}>Done</IonButton>
                 </>
               ) : (
-                <div className="pt-2">
-                  <IonProgressBar value={pct! / 100} />
-                  <p className="text-sm font-semibold mt-2 text-center" style={{ color: 'var(--oa-ink)' }}>{phase} {pct! > 0 ? `${pct}%` : ''}</p>
-                  <p className="text-sm mt-1 text-center" style={{ color: 'var(--oa-ink)' }}>
-                    <strong>Keep the phone right next to the scale and this screen open.</strong> Catching
-                    the scale can take a minute or two — please don't lock the phone or leave the app.
+                <>
+                  <IonIcon icon={warningOutline} style={{ fontSize: 40, color: 'var(--ion-color-warning)' }} />
+                  <span className="text-base font-bold" style={{ color: 'var(--oa-ink)' }}>Update didn't finish</span>
+                  <span className="text-sm oa-muted">{result.message}</span>
+                  <span className="text-xs oa-subtle">
+                    Your scale is safe — it can't be harmed by a stopped update. Stand close and try again.
+                  </span>
+                  <IonButton onClick={() => { setResult(null); void run(); }} disabled={!canStartUpdate}>Try again</IonButton>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* When busy: progress only */}
+          {busy && (
+            <div className="oa-card p-5 flex flex-col gap-3">
+              <span className="text-base font-bold text-center" style={{ color: 'var(--oa-ink)' }}>
+                {phaseLabel(phase)}{pct! > 0 ? ` · ${pct}%` : ''}
+              </span>
+              <IonProgressBar value={pct! > 0 ? pct! / 100 : undefined} type={pct! > 0 ? 'determinate' : 'indeterminate'} />
+              <p className="text-sm text-center" style={{ color: 'var(--oa-ink)' }}>
+                <strong>Keep the phone right next to the scale and this screen open.</strong>
+              </p>
+              <p className="text-xs oa-subtle text-center">
+                It can take a minute or two, and the scale can't be harmed. Please don't lock the phone or leave the app.
+              </p>
+            </div>
+          )}
+
+          {/* Not busy, no result: the check result / update offer */}
+          {!busy && !result && (
+            loadError ? (
+              <div className="oa-card p-4 flex items-center gap-2">
+                <IonIcon icon={warningOutline} style={{ color: 'var(--ion-color-warning)', fontSize: 22 }} />
+                <span className="text-sm oa-muted">We couldn't check for updates just now. Try again shortly.</span>
+              </div>
+            ) : upToDate ? (
+              <div className="oa-card p-4 flex items-center gap-2">
+                <IonIcon icon={checkmarkCircle} style={{ color: 'var(--ion-color-success)', fontSize: 22 }} />
+                <span style={{ color: 'var(--oa-ink)' }}>You're on the latest software.</span>
+              </div>
+            ) : latest && (
+              <div className="flex flex-col gap-4">
+
+                {/* Instructions FIRST */}
+                <div className="oa-card p-4 flex flex-col gap-3" style={{ border: '2px solid var(--oa-honey-400)' }}>
+                  <span className="font-bold text-base" style={{ color: 'var(--oa-ink)' }}>Before you start</span>
+                  <div className="flex items-start gap-3">
+                    <IonIcon icon={locationOutline} style={{ color: 'var(--oa-honey-700)', fontSize: 22, marginTop: 1 }} />
+                    <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>Stand right next to the hive.</span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <IonIcon icon={phonePortraitOutline} style={{ color: 'var(--oa-honey-700)', fontSize: 22, marginTop: 1 }} />
+                    <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>Keep this screen open — don't lock the phone or switch apps.</span>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <IonIcon icon={timeOutline} style={{ color: 'var(--oa-honey-700)', fontSize: 22, marginTop: 1 }} />
+                    <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>It takes a minute or two — the scale can't be harmed.</span>
+                  </div>
+                </div>
+
+                {/* What's new */}
+                <div className="oa-card p-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>
+                      New version {latest.version}
+                    </span>
+                    <span className="text-xs oa-subtle">{installed ?? '—'} → {latest.version}</span>
+                  </div>
+                  {latest.notes && (
+                    <div className="flex items-start gap-2">
+                      <IonIcon icon={sparklesOutline} style={{ color: 'var(--oa-honey-600)', fontSize: 18, marginTop: 2 }} />
+                      <p className="text-sm oa-muted whitespace-pre-line">{latest.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Battery, in plain words */}
+                <div className="flex items-center gap-2 px-1">
+                  <IonIcon
+                    icon={batteryHalfOutline}
+                    style={{ fontSize: 20, color: batteryTooLow ? 'var(--ion-color-warning)' : 'var(--ion-color-success)' }}
+                  />
+                  <span className="text-sm" style={{ color: batteryTooLow ? 'var(--ion-color-warning)' : 'var(--oa-ink)' }}>
+                    {!batteryKnown ? 'Checking battery…'
+                      : batteryTooLow ? 'Battery is low — charge it before updating.'
+                      : 'Battery is good for an update.'}
+                  </span>
+                </div>
+
+                <IonButton
+                  expand="block"
+                  onClick={run}
+                  disabled={!canStartUpdate}
+                  style={{ '--padding-top': '18px', '--padding-bottom': '18px' } as React.CSSProperties}
+                >
+                  <IonIcon slot="start" icon={cloudDownloadOutline} /> Update now
+                </IonButton>
+              </div>
+            )
+          )}
+
+          {/* Having trouble — collapsed, plain language */}
+          {!busy && (
+            <div className="oa-card p-4">
+              <button className="w-full flex items-center justify-between" onClick={() => setShowHelp((v) => !v)}>
+                <span className="text-sm font-semibold" style={{ color: 'var(--oa-ink)' }}>Having trouble?</span>
+                <IonIcon icon={showHelp ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 20 }} />
+              </button>
+              {showHelp && (
+                <div className="mt-3 flex flex-col gap-2">
+                  <p className="text-xs oa-muted">
+                    A stopped update can't harm your scale — it simply waits, ready to try again. Stand close, keep this
+                    screen open, and tap Update again.
+                  </p>
+                  <p className="text-xs oa-muted">
+                    If it still won't update, turn the phone's Bluetooth off and on, then retry. As a last resort the
+                    scale can be restored with a cable — just ask and we'll walk you through it.
                   </p>
                 </div>
               )}
             </div>
           )}
-
-          <div className="oa-card p-4 flex flex-col gap-1">
-            <span className="text-sm font-semibold" style={{ color: 'var(--oa-ink)' }}>If an update is interrupted</span>
-            <p className="text-xs oa-muted">
-              The scale can't be bricked by a failed update: its bootloader only runs a fully
-              received, validated image. If a transfer stops partway, the scale waits in update
-              mode — just start the update again with it nearby.
-            </p>
-            <p className="text-xs oa-muted">
-              As a last resort you can restore it over USB: double-tap the reset button to expose
-              the drive, then drag on the recovery <span className="oa-numeral">.uf2</span> file.
-            </p>
-          </div>
         </div>
+
         <IonToast
           isOpen={!!toast}
           message={toast ?? ''}
-          duration={12000}
+          duration={10000}
           position="middle"
           buttons={[{ text: 'OK', role: 'cancel' }]}
-          cssClass="oa-firmware-toast"
           onDidDismiss={() => setToast(null)}
         />
       </IonContent>

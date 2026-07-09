@@ -392,9 +392,14 @@ static float readDieTempC() {
 // Piecewise-linear approximation of a typical 1S LiPo discharge curve under light load.
 // 4.20V = 100 %, 3.90V ≈ 60 %, 3.70V ≈ 25 %, 3.30V = 0 %.
 static int batteryPctFromVoltage(float v) {
+    // Approximate single-cell LiPo state-of-charge (nominal 3.7V, full 4.2V).
+    // Piecewise-linear fit that tracks a resting LiPo curve reasonably well and
+    // reads intuitively when solar-charged (e.g. ~4.0V -> ~85%).
     if (v >= 4.20f) return 100;
-    if (v >= 3.90f) return (int)(60 + (v - 3.90f) * (40.0f / 0.30f));
-    if (v >= 3.70f) return (int)(25 + (v - 3.70f) * (35.0f / 0.20f));
-    if (v >= 3.30f) return (int)( 0 + (v - 3.30f) * (25.0f / 0.40f));
-    return 0;
+    if (v >= 4.00f) return (int)(85 + (v - 4.00f) * (15.0f / 0.20f));  // 4.00-4.20 -> 85-100
+    if (v >= 3.80f) return (int)(55 + (v - 3.80f) * (30.0f / 0.20f));  // 3.80-4.00 -> 55-85
+    if (v >= 3.70f) return (int)(45 + (v - 3.70f) * (10.0f / 0.10f));  // 3.70-3.80 -> 45-55
+    if (v >= 3.50f) return (int)(20 + (v - 3.50f) * (25.0f / 0.20f));  // 3.50-3.70 -> 20-45
+    if (v >= 3.30f) return (int)( 5 + (v - 3.30f) * (15.0f / 0.20f));  // 3.30-3.50 -> 5-20
+    return 0;                                                          // below 3.30 -> 0
 }

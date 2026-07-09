@@ -50,6 +50,10 @@ const IMG_APPLICATION = 0x04; // START_DFU image type: application only
 // OPERATION_FAILED. We use the DFU protocol's packet-receipt notifications (PRN)
 // as backpressure with a SMALL interval so we never outrun the pool.
 const PACKET_CHUNK = 20;
+// Upper bound for MTU-derived firmware-data packets. 4-byte aligned and well
+// below the ~244 the negotiated MTU allows, to stay clear of the bootloader's
+// RX buffer limits while cutting round-trips ~8x.
+const MAX_PACKET_CHUNK = 160;
 const PRN_INTERVAL = 4; // wait for a receipt every N packets (~80 bytes)
 
 export interface DfuInput {
@@ -277,6 +281,18 @@ export async function runLegacyDfu(
     const bin = input.firmware;
     const total = bin.length;
 
+    // Size firmware-data packets from the negotiated MTU (write payload = MTU-3),
+    // 4-byte aligned (the bootloader rejects non-word-length data), and capped
+    // conservatively so we stay well within its RX buffers. Falls back to the
+    // min-MTU-safe 20 bytes if MTU can't be read. PRN backpressure is unchanged.
+    let dataChunk = PACKET_CHUNK;
+    try {
+      const mtu = await BleClient.getMtu(bootloaderId);
+      if (typeof mtu === 'number' && mtu > 23) {
+        dataChunk = Math.max(PACKET_CHUNK, Math.min(MAX_PACKET_CHUNK, Math.floor((mtu - 3) / 4) * 4));
+      }
+    } catch { /* keep the safe 20-byte default */ }
+
     // 1. START_DFU (application) + image sizes [sd=0, bl=0, app=len]. The
     //    bootloader erases the target bank during this step and only replies
     //    once it's ready, so no separate erase wait is needed.
@@ -316,7 +332,7 @@ export async function runLegacyDfu(
     let sinceReceipt = 0;
     let finalEv: Promise<DataView> | null = null;
     while (sent < total) {
-      const len = Math.min(PACKET_CHUNK, total - sent);
+      const len = Math.min(dataChunk, total - sent);
       const isLast = sent + len >= total;
       const atBatch = sinceReceipt + 1 >= PRN_INTERVAL && !isLast;
       let ev2: Promise<DataView> | null = null;
