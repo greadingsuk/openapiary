@@ -2,21 +2,16 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet, IonToast, IonSpinner,
+  IonActionSheet,
 } from '@ionic/react';
-import {
-  add, settingsOutline, cloudOfflineOutline, batteryHalfOutline,
-  swapVerticalOutline, fileTrayFullOutline, syncOutline,
-} from 'ionicons/icons';
+import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline } from 'ionicons/icons';
 import { useState } from 'react';
-import { listHives, patchHive } from '../lib/api';
+import { listHives } from '../lib/api';
 import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
-import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, upsertApiary, setHiveApiary, seedApiariesFromCloud, type ApiaryStore } from '../lib/apiaries';
-import { syncNearbyKnownHives } from '../lib/nearbySync';
-import NewApiaryModal from '../components/NewApiaryModal';
+import { loadApiaries, apiaryOf, apiaryNames, type ApiaryStore } from '../lib/apiaries';
 import { StatusDot, EmptyState, ErrorState, ListSkeleton } from '../components/ui';
 
 type Sort = 'name' | 'weight' | 'recent';
@@ -31,11 +26,6 @@ const HiveListPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>('name');
   const [sortOpen, setSortOpen] = useState(false);
-  const [showApiaryMenu, setShowApiaryMenu] = useState(false);
-  const [showNewApiary, setShowNewApiary] = useState(false);
-  const [assignHive, setAssignHive] = useState<Hive | null>(null);
-  const [syncingNearby, setSyncingNearby] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
 
   async function load() {
     setError(null);
@@ -57,8 +47,6 @@ const HiveListPage: React.FC = () => {
           const byId = new Map(localHives.map((h) => [h.id, h]));
           for (const c of cloud) byId.set(c.id, { id: c.id, name: c.name, created_at: c.created_at });
           setHives([...byId.values()]);
-          // Restore apiary grouping from the cloud (survives reinstall).
-          setApiaries(await seedApiariesFromCloud(cloud));
         }
       }
     } catch (e) {
@@ -67,43 +55,6 @@ const HiveListPage: React.FC = () => {
   }
 
   useIonViewWillEnter(() => { void load(); });
-
-  async function createApiary(nameIn: string, location: string) {
-    const name = (nameIn ?? '').trim();
-    if (!name) return;
-    await upsertApiary(name, location.trim() ? { location: location.trim() } : undefined);
-    setApiaries(await loadApiaries());
-  }
-
-  async function assignHiveToApiary(hiveId: string, apiary: string) {
-    await setHiveApiary(hiveId, apiary);
-    const store = await loadApiaries();
-    setApiaries(store);
-    // Persist the assignment to the cloud so it survives reinstall.
-    try {
-      const s = await loadSettings();
-      if (s.apiKey && (typeof navigator === 'undefined' || navigator.onLine)) {
-        const meta = apiaryMeta(store, apiary);
-        await patchHive(s, hiveId, { apiary, region: meta.location, lat: meta.lat, lon: meta.lon });
-      }
-    } catch { /* offline — will re-sync on next assignment */ }
-  }
-
-  async function runNearbySync() {
-    if (syncingNearby) return;
-    setSyncingNearby(true);
-    setToast('Scanning for your scales (up to ~60s)…');
-    try {
-      const r = await syncNearbyKnownHives(65000, hives.map((h) => h.id));
-      await load();
-      const cloudBits = `${r.cloud.succeeded}/${r.cloud.attempted} uploaded`;
-      setToast(`Scan complete: heard ${r.heard} scale(s), ${r.stored} reading(s) captured, ${cloudBits}.`);
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSyncingNearby(false);
-    }
-  }
 
   const now = Date.now();
 
@@ -146,15 +97,6 @@ const HiveListPage: React.FC = () => {
             {r?.weight_kg != null ? r.weight_kg.toFixed(1) : '--'}
           </span>
           <span className="text-xs oa-muted">kg</span>
-          <button
-            className="text-xs oa-muted mt-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              setAssignHive(h);
-            }}
-          >
-            Move
-          </button>
         </div>
       </div>
     );
@@ -172,9 +114,6 @@ const HiveListPage: React.FC = () => {
             )}
             <IonButton fill="clear" onClick={() => setSortOpen(true)} aria-label="Sort">
               <IonIcon slot="icon-only" icon={swapVerticalOutline} />
-            </IonButton>
-            <IonButton fill="clear" onClick={() => setShowApiaryMenu(true)} aria-label="Apiaries">
-              <IonIcon slot="icon-only" icon={fileTrayFullOutline} />
             </IonButton>
             <IonButton fill="clear" routerLink="/settings" aria-label="Settings">
               <IonIcon slot="icon-only" icon={settingsOutline} />
@@ -210,17 +149,6 @@ const HiveListPage: React.FC = () => {
           </div>
         )}
 
-        <IonFab slot="fixed" vertical="bottom" horizontal="start">
-          <IonFabButton
-            color="light"
-            aria-label="Scan paired hives"
-            disabled={syncingNearby}
-            onClick={() => { void runNearbySync(); }}
-          >
-            {syncingNearby ? <IonSpinner name="dots" /> : <IonIcon icon={syncOutline} />}
-          </IonFabButton>
-        </IonFab>
-
         <IonFab slot="fixed" vertical="bottom" horizontal="end">
           <IonFabButton routerLink="/add" aria-label="Scan for a hive">
             <IonIcon icon={add} />
@@ -238,48 +166,6 @@ const HiveListPage: React.FC = () => {
             { text: 'Cancel', role: 'cancel' },
           ]}
         />
-
-        <IonActionSheet
-          isOpen={showApiaryMenu}
-          onDidDismiss={() => setShowApiaryMenu(false)}
-          header="Apiaries"
-          buttons={[
-            ...apiaryNames(apiaries)
-              .filter((n) => n !== 'Unassigned')
-              .map((n) => ({ text: n, handler: () => undefined })),
-            { text: '+ New apiary…', handler: () => setShowNewApiary(true) },
-            { text: 'Cancel', role: 'cancel' },
-          ]}
-        />
-
-        <IonActionSheet
-          isOpen={!!assignHive}
-          onDidDismiss={() => setAssignHive(null)}
-          header={assignHive ? `Move ${assignHive.name}` : 'Move hive'}
-          buttons={[
-            ...apiaryNames(apiaries)
-              .filter((n) => n !== 'Unassigned')
-              .map((n) => ({
-                text: n,
-                handler: () => { if (assignHive) void assignHiveToApiary(assignHive.id, n); },
-              })),
-            {
-              text: '+ New apiary…',
-              handler: () => {
-                setAssignHive(null);
-                setShowNewApiary(true);
-              },
-            },
-            { text: 'Cancel', role: 'cancel' },
-          ]}
-        />
-
-        <NewApiaryModal
-          isOpen={showNewApiary}
-          onClose={() => setShowNewApiary(false)}
-          onCreate={(nm, loc) => { void createApiary(nm, loc); }}
-        />
-        <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
       </IonContent>
     </IonPage>
   );

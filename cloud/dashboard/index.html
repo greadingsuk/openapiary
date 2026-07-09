@@ -143,7 +143,7 @@ const LS_KEY = 'oa.fleet.apiKey';
 const LS_PERSONA = 'oa.fleet.persona';
 const LS_EMAIL = 'oa.fleet.lastEmail';
 
-$('apiUrl').value = localStorage.getItem(LS_URL) || 'https://api.openapiary.co.uk';
+$('apiUrl').value = localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev';
 $('email').value = localStorage.getItem(LS_EMAIL) || '';
 let apiKey = localStorage.getItem(LS_KEY) || '';
 
@@ -230,7 +230,7 @@ function renderHives(hives) {
   }
   const rows = hives.map(h => `
     <tr>
-      <td class="mono">${h.id}</td>
+      <td class="mono"><a href="device.html?hive=${encodeURIComponent(h.id)}" style="color:var(--accent-2);font-weight:600">${h.id}</a></td>
       <td class="mono">${h.user_prefix}...</td>
       <td>${h.region || '-'}</td>
       <td class="mono">${h.lat != null ? h.lat.toFixed(3) : '-'}, ${h.lon != null ? h.lon.toFixed(3) : '-'}</td>

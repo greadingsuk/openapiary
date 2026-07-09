@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Open Apiary - Device Deep Dive</title>
+<link rel="icon" href="icons/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+<meta name="theme-color" content="#000000" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #fbf8f2;
+    --fg: #120805;
+    --accent: #f2800f;
+    --accent-2: #b05908;
+    --muted: #6e6655;
+    --card: #ffffff;
+    --border: rgba(18, 8, 5, 0.08);
+    --on-accent: #ffffff;
+    --bar: #000000;
+    --on-bar: #f3ece0;
+    --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Inter", -apple-system, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--font-body);
+    background: var(--bg); color: var(--fg); min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: none;
+    background: var(--bar);
+  }
+  header h1 { margin: 0; font-family: var(--font-display); font-size: 18px; color: var(--on-bar); font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; }
+  header .config { display: flex; gap: 8px; align-items: center; }
+  a.back { color: var(--on-bar); text-decoration: none; font-size: 13px; font-weight: 600; opacity: 0.85; }
+  a.back:hover { opacity: 1; }
+  input, button, select {
+    background: #fff; color: var(--fg); border: 1px solid var(--border);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  }
+  button { cursor: pointer; background: var(--accent); color: var(--on-accent); border: none; font-weight: 700; }
+  button:hover { background: var(--accent-2); color: #fff; }
+  button.ghost { background: #fff; color: var(--fg); border: 1px solid var(--border); font-weight: 600; }
+  button.ghost:hover { background: #f5efe4; }
+  button.chip { padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #fff; color: var(--fg); border: 1px solid var(--border); }
+  button.chip.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  main { padding: 24px; display: grid; gap: 24px; max-width: 1400px; margin: 0 auto; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px;
+    box-shadow: 0 1px 3px rgba(18,8,5,0.06);
+  }
+  .card h2 { margin: 0 0 16px 0; font-family: var(--font-display); font-size: 14px; color: var(--fg); text-transform: uppercase; letter-spacing: 1px; font-weight: 800; }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+  .meta .item .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; }
+  .meta .item .val { font-family: var(--font-display); font-weight: 700; margin-top: 4px; font-size: 18px; word-break: break-all; }
+  .filters { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .filters .field { display: flex; flex-direction: column; gap: 4px; }
+  .filters .field label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .filters .presets { display: flex; gap: 6px; align-items: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.8px; position: sticky; top: 0; background: var(--card); }
+  td.mono { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  td.num { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+  .tablewrap { max-height: 640px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+  .error { background: #fde8e8; color: #8a1f23; padding: 12px 16px; border-radius: 6px; border: 1px solid #f0c0c0; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  .rowbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .count { color: var(--muted); font-size: 12px; }
+  canvas { max-height: 300px; }
+  @keyframes shimmer { 0%{opacity:.4} 50%{opacity:.75} 100%{opacity:.4} }
+  .skeleton { background: linear-gradient(100deg, #efe7d8 30%, #f7f1e6 50%, #efe7d8 70%); animation: shimmer 1.4s ease-in-out infinite; border-radius: 12px; }
+  @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPEN APIARY &middot; DEVICE</h1>
+  <div class="config">
+    <a class="back" href="index.html">&larr; Back to fleet</a>
+  </div>
+</header>
+<main>
+  <div id="error"></div>
+
+  <section class="card">
+    <h2>Device</h2>
+    <div class="meta" id="meta"></div>
+  </section>
+
+  <section class="card">
+    <h2>Time range</h2>
+    <div class="filters">
+      <div class="field">
+        <label for="from">From</label>
+        <input id="from" type="datetime-local" />
+      </div>
+      <div class="field">
+        <label for="to">To</label>
+        <input id="to" type="datetime-local" />
+      </div>
+      <button id="applyBtn">Apply</button>
+      <div class="presets" id="presets">
+        <button class="chip" data-hours="24">24h</button>
+        <button class="chip" data-hours="168">7d</button>
+        <button class="chip" data-hours="720">30d</button>
+        <button class="chip" data-hours="2160">90d</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Weight &amp; temperature</h2>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="card">
+    <div class="rowbar">
+      <h2 style="margin:0">Raw recordings</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="count" id="count"></span>
+        <button class="ghost" id="csvBtn">Download CSV</button>
+      </div>
+    </div>
+    <div class="tablewrap" style="margin-top:16px">
+      <div id="table"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LS_URL = 'oa.fleet.apiUrl';
+const LS_KEY = 'oa.fleet.apiKey';
+
+const apiUrl = (localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev').replace(/\/$/, '');
+const apiKey = localStorage.getItem(LS_KEY) || '';
+const hiveId = new URLSearchParams(location.search).get('hive') || '';
+
+let chart;
+let lastRows = [];
+
+async function api(path) {
+  const r = await fetch(apiUrl + path, { headers: { 'X-API-Key': apiKey } });
+  if (!r.ok) throw new Error(`${path}: ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+// datetime-local <-> epoch ms (interpreted in the browser's local timezone).
+function toLocalInput(ms) {
+  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}
+function fromLocalInput(v) {
+  return v ? new Date(v).getTime() : NaN;
+}
+
+function setRange(fromMs, toMs) {
+  $('from').value = toLocalInput(fromMs);
+  $('to').value = toLocalInput(toMs);
+}
+
+function markPreset(hours) {
+  $('presets').querySelectorAll('.chip').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.hours) === hours);
+  });
+}
+
+function renderMeta(h) {
+  const items = [
+    ['Hive ID', h.id],
+    ['Name', h.name || '-'],
+    ['Owner', h.user_prefix ? h.user_prefix + '...' : '-'],
+    ['Region', h.region || '-'],
+    ['Apiary', h.apiary || '-'],
+    ['Lat, Lon', (h.lat != null && h.lon != null) ? `${h.lat.toFixed(4)}, ${h.lon.toFixed(4)}` : '-'],
+    ['Public', h.public ? 'yes' : 'no'],
+    ['Created', new Date(h.created_at).toLocaleDateString()],
+  ];
+  $('meta').innerHTML = items.map(([label, val]) =>
+    `<div class="item"><div class="label">${label}</div><div class="val">${val}</div></div>`
+  ).join('');
+}
+
+function renderTable(rows) {
+  if (!rows.length) {
+    $('table').innerHTML = '<div class="empty">No recordings in this time range.</div>';
+    return;
+  }
+  const body = rows.map(r => `
+    <tr>
+      <td class="mono">${new Date(r.ts).toLocaleString()}</td>
+      <td class="num">${r.weight_kg != null ? r.weight_kg.toFixed(3) : '-'}</td>
+      <td class="num">${r.battery_v != null ? r.battery_v.toFixed(2) : '-'}</td>
+      <td class="num">${r.temp_c != null ? r.temp_c.toFixed(1) : '-'}</td>
+      <td class="num">${r.rssi != null ? r.rssi : '-'}</td>
+      <td class="num">${r.packet_id}</td>
+    </tr>`).join('');
+  $('table').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Timestamp</th><th style="text-align:right">Weight (kg)</th>
+        <th style="text-align:right">Battery (V)</th><th style="text-align:right">Temp (&deg;C)</th>
+        <th style="text-align:right">RSSI</th><th style="text-align:right">Packet</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+function renderChart(rows) {
+  const asc = [...rows].sort((a, b) => a.ts - b.ts);
+  const weight = asc.filter(r => r.weight_kg != null).map(r => ({ x: r.ts, y: r.weight_kg }));
+  const temp = asc.filter(r => r.temp_c != null).map(r => ({ x: r.ts, y: r.temp_c }));
+  if (chart) chart.destroy();
+  chart = new Chart($('chart'), {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'Weight (kg)', data: weight, borderColor: '#f2800f', backgroundColor: 'rgba(242,128,15,0.14)', fill: true, tension: 0.2, pointRadius: 0, yAxisID: 'y' },
+        { label: 'Temp (\u00B0C)', data: temp, borderColor: '#834206', backgroundColor: 'transparent', tension: 0.2, pointRadius: 0, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { type: 'time', ticks: { color: '#6e6047', maxTicksLimit: 8 }, grid: { color: 'rgba(26,20,16,0.08)' } },
+        y: { position: 'left', title: { display: true, text: 'kg' }, ticks: { color: '#6e6047' }, grid: { color: 'rgba(26,20,16,0.08)' } },
+        y1: { position: 'right', title: { display: true, text: '\u00B0C' }, ticks: { color: '#6e6047' }, grid: { drawOnChartArea: false } },
+      },
+      plugins: { legend: { labels: { color: '#1a1410' } } },
+    },
+  });
+}
+
+function showLoading() {
+  $('table').innerHTML = '<div class="skeleton" style="height:200px"></div>';
+  $('count').textContent = '';
+}
+
+async function load() {
+  if (!apiKey) {
+    $('error').innerHTML = '<div class="error">No admin session. Open the <a href="index.html">fleet dashboard</a> and sign in first.</div>';
+    return;
+  }
+  if (!hiveId) {
+    $('error').innerHTML = '<div class="error">No hive selected. Go back to the <a href="index.html">fleet dashboard</a> and click a device.</div>';
+    return;
+  }
+  const from = fromLocalInput($('from').value);
+  const to = fromLocalInput($('to').value);
+  if (isNaN(from) || isNaN(to) || from >= to) {
+    $('error').innerHTML = '<div class="error">Pick a valid From/To range.</div>';
+    return;
+  }
+  $('error').innerHTML = '';
+  showLoading();
+  try {
+    const data = await api(`/v1/admin/fleet/hives/${encodeURIComponent(hiveId)}/readings?from=${from}&to=${to}`);
+    renderMeta(data.hive);
+    lastRows = data.readings || [];
+    renderTable(lastRows);
+    renderChart(lastRows);
+    const cap = data.count >= 50000 ? ' (capped)' : '';
+    $('count').textContent = `${data.count.toLocaleString()} recordings${cap}`;
+  } catch (e) {
+    $('error').innerHTML = `<div class="error">${e.message}</div>`;
+    $('table').innerHTML = '';
+  }
+}
+
+function downloadCsv() {
+  if (!lastRows.length) return;
+  const header = 'timestamp_iso,ts_ms,weight_kg,battery_v,temp_c,rssi,packet_id';
+  const lines = lastRows.map(r => [
+    new Date(r.ts).toISOString(), r.ts,
+    r.weight_kg ?? '', r.battery_v ?? '', r.temp_c ?? '', r.rssi ?? '', r.packet_id,
+  ].join(','));
+  const blob = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `openapiary-${hiveId}-${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$('applyBtn').onclick = () => { markPreset(0); load(); };
+$('csvBtn').onclick = downloadCsv;
+$('presets').querySelectorAll('.chip').forEach(btn => {
+  btn.onclick = () => {
+    const hours = Number(btn.dataset.hours);
+    const to = Date.now();
+    setRange(to - hours * 3600000, to);
+    markPreset(hours);
+    load();
+  };
+});
+
+// Default: last 7 days.
+setRange(Date.now() - 168 * 3600000, Date.now());
+markPreset(168);
+load();
+</script>
+</body>
+</html>

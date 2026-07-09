@@ -16,10 +16,6 @@ export interface HiveSummary {
   name: string;
   created_at: number;
   public: number;
-  region?: string | null;
-  lat?: number | null;
-  lon?: number | null;
-  apiary?: string | null;
 }
 
 export interface HiveReading {
@@ -121,40 +117,11 @@ export async function getReadings(s: Settings, hiveId: string): Promise<HiveRead
   return j.readings ?? [];
 }
 
-/** Delete all cloud readings for a hive (owner-only). */
-export async function deleteAllReadings(s: Settings, hiveId: string): Promise<number> {
-  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}/readings`, {
-    method: 'DELETE',
-    headers: headers(s),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((j as { error?: string }).error ?? `DELETE readings failed (HTTP ${r.status})`);
-  return Number((j as { deleted?: number }).deleted ?? 0);
-}
-
-/** Delete specific cloud readings for a hive by timestamp (owner-only). */
-export async function deleteReadingsByTimestamp(
-  s: Settings,
-  hiveId: string,
-  timestamps: number[],
-): Promise<number> {
-  const clean = [...new Set(timestamps)].filter((n) => Number.isFinite(n) && n > 0);
-  if (!clean.length) return 0;
-  const tsParam = encodeURIComponent(clean.join(','));
-  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}/readings?ts=${tsParam}`, {
-    method: 'DELETE',
-    headers: headers(s),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((j as { error?: string }).error ?? `DELETE readings failed (HTTP ${r.status})`);
-  return Number((j as { deleted?: number }).deleted ?? 0);
-}
-
 /** Update a hive's mutable fields (currently the friendly name). */
 export async function patchHive(
   s: Settings,
   hiveId: string,
-  patch: { name?: string; region?: string; lat?: number; lon?: number; apiary?: string },
+  patch: { name?: string; region?: string; lat?: number; lon?: number },
 ): Promise<void> {
   const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}`, {
     method: 'PATCH',
@@ -162,55 +129,4 @@ export async function patchHive(
     body: JSON.stringify(patch),
   });
   if (!r.ok) throw new Error(`PATCH /v1/hives ${r.status}`);
-}
-
-// ---------------------------------------------------------------------------
-// Firmware (OTA)
-//
-// The binary lives on a private GitHub release fronted by the Worker; the app
-// only ever talks to the Worker (with its X-API-Key), never GitHub. The
-// manifest carries the sha256 + detached Ed25519 signature the app verifies
-// before flashing (see lib/ota.ts).
-// ---------------------------------------------------------------------------
-export interface FirmwareAsset {
-  name: string;
-  size: number;
-  downloadUrl: string;
-}
-
-export interface FirmwareManifest {
-  version?: string;
-  zip?: { name: string; size: number; sha256: string; sig: string };
-  uf2?: { name: string; size: number; sha256: string };
-  notes?: string;
-  createdAt?: number;
-}
-
-export interface FirmwareInfo {
-  version: string;
-  notes: string;
-  zip: FirmwareAsset | null;
-  uf2: FirmwareAsset | null;
-  manifest: FirmwareManifest | null;
-}
-
-/** Metadata for the newest published firmware (proxied from the private release). */
-export async function getLatestFirmware(s: Settings): Promise<FirmwareInfo> {
-  // Always hit the origin: the endpoint sets a 5-minute Cache-Control, but a
-  // firmware version check must reflect a just-published release immediately.
-  const bust = `?t=${Date.now()}`;
-  const r = await fetch(`${s.apiUrl}/v1/firmware/latest${bust}`, {
-    headers: headers(s),
-    cache: 'no-store',
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error ?? `GET /v1/firmware/latest ${r.status}`);
-  return j as FirmwareInfo;
-}
-
-/** Download a firmware asset's raw bytes through the Worker (authenticated). */
-export async function downloadFirmwareBytes(s: Settings, downloadUrl: string): Promise<Uint8Array> {
-  const r = await fetch(downloadUrl, { headers: { 'X-API-Key': s.apiKey } });
-  if (!r.ok) throw new Error(`firmware download failed (${r.status})`);
-  return new Uint8Array(await r.arrayBuffer());
 }

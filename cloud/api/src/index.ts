@@ -18,6 +18,7 @@
 //   --- admin (X-Admin-Key) ---
 //   GET    /v1/admin/fleet/stats         counts + last-24h ingest summary
 //   GET    /v1/admin/fleet/hives         all hives across users (anonymised)
+//   GET    /v1/admin/fleet/hives/:id/readings  raw readings for ONE device (time window)
 //   GET    /v1/admin/fleet/readings      cross-user readings (region/time window)
 
 import { Hono } from "hono";
@@ -759,6 +760,39 @@ app.get("/v1/admin/fleet/hives", async (c) => {
           );
     const { results } = await stmt.all();
     return c.json({ hives: results });
+});
+
+// --- ADMIN: single-device deep dive — hive metadata + RAW readings ---
+// Unlike /fleet/readings (aggregated fleet view, anonymised), this returns every
+// raw row for ONE hive within a time window, including packet_id + rssi, so an
+// admin can inspect exactly what a single device recorded.
+//   GET /v1/admin/fleet/hives/:id/readings?from=<ms>&to=<ms>&limit=<n>
+app.get("/v1/admin/fleet/hives/:id/readings", async (c) => {
+    const id = c.req.param("id");
+    const to = Number(c.req.query("to") ?? Date.now());
+    const from = Number(c.req.query("from") ?? to - 7 * 24 * 60 * 60 * 1000);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20000), 1), 50000);
+
+    const hive = await c.env.DB.prepare(
+        `SELECT id, name, created_at, public, lat, lon, region, apiary,
+                substr(user_id, 1, 8) AS user_prefix
+         FROM hives WHERE id = ?`
+    )
+        .bind(id)
+        .first();
+    if (!hive) return c.json({ error: "not found" }, 404, { "Access-Control-Allow-Origin": "*" });
+
+    const { results } = await c.env.DB.prepare(
+        `SELECT id, ts, weight_kg, battery_v, temp_c, rssi, packet_id
+         FROM readings
+         WHERE hive_id = ? AND ts BETWEEN ? AND ?
+         ORDER BY ts DESC
+         LIMIT ?`
+    )
+        .bind(id, from, to, limit)
+        .all();
+
+    return c.json({ hive, from, to, count: results.length, readings: results });
 });
 
 // --- ADMIN: cross-user readings ---
