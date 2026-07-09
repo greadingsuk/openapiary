@@ -38,7 +38,6 @@ const OP_VALIDATE = 0x04;
 const OP_ACTIVATE_RESET = 0x05;
 const OP_PRN_REQUEST = 0x08;
 const OP_RESPONSE = 0x10;
-const OP_RECEIPT = 0x11;
 const RES_SUCCESS = 0x01;
 
 const IMG_APPLICATION = 0x04; // START_DFU image type: application only
@@ -184,24 +183,19 @@ export async function findBootloader(timeoutMs = 25000): Promise<string> {
 
 /**
  * Control-point notification router. The legacy bootloader sends two kinds of
- * notification on the control point:
+ * notification on the control point, both of which we surface through a single
+ * "next notification" waiter:
  *   - RESPONSE (0x10): [0x10, reqOpcode, resultCode, ...]
  *   - RECEIPT  (0x11): [0x11, bytesReceived(uint32 LE)]  (packet-receipt flow ctl)
  */
 class DfuControl {
-  private respResolve: ((dv: DataView) => void) | null = null;
-  private receiptResolve: ((dv: DataView) => void) | null = null;
+  private resolver: ((dv: DataView) => void) | null = null;
 
   constructor(private deviceId: string) {}
 
   async start(): Promise<void> {
     await BleClient.startNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL, (dv) => {
-      const op = dv.getUint8(0);
-      if (op === OP_RESPONSE) {
-        const r = this.respResolve; this.respResolve = null; if (r) r(dv);
-      } else if (op === OP_RECEIPT) {
-        const r = this.receiptResolve; this.receiptResolve = null; if (r) r(dv);
-      }
+      const r = this.resolver; this.resolver = null; if (r) r(dv);
     });
   }
 
@@ -209,22 +203,16 @@ class DfuControl {
     try { await BleClient.stopNotifications(this.deviceId, DFU_SERVICE, DFU_CONTROL); } catch { /* ignore */ }
   }
 
-  /** Arm a response waiter BEFORE the write that will trigger it. */
-  armResponse(timeoutMs = 20000): Promise<DataView> {
+  /**
+   * Arm a waiter for the NEXT control-point notification (response or receipt).
+   * MUST be called BEFORE the write that will trigger it, so we never miss a
+   * fast notification.
+   */
+  armNext(timeoutMs = 20000): Promise<DataView> {
     return new Promise<DataView>((resolve, reject) => {
-      this.respResolve = resolve;
+      this.resolver = resolve;
       setTimeout(() => {
-        if (this.respResolve === resolve) { this.respResolve = null; reject(new Error('DFU control point timed out')); }
-      }, timeoutMs);
-    });
-  }
-
-  /** Arm a packet-receipt waiter BEFORE sending the packets it acknowledges. */
-  armReceipt(timeoutMs = 20000): Promise<number> {
-    return new Promise<number>((resolve, reject) => {
-      this.receiptResolve = (dv) => resolve(dv.getUint32(1, true));
-      setTimeout(() => {
-        if (this.receiptResolve) { this.receiptResolve = null; reject(new Error('DFU packet receipt timed out')); }
+        if (this.resolver === resolve) { this.resolver = null; reject(new Error('DFU control point timed out')); }
       }, timeoutMs);
     });
   }
@@ -268,66 +256,78 @@ export async function runLegacyDfu(
         await ctl.start();
         onProgress(0, 'Preparing');
 
+        const bin = input.firmware;
+        const total = bin.length;
+
         // 1. START_DFU (application) + image sizes [sd=0, bl=0, app=len].
-        let resp = ctl.armResponse();
+        let ev = ctl.armNext(30000);
         await ctl.writeControl([OP_START_DFU, IMG_APPLICATION]);
         const sizes = new Uint8Array(12);
         sizes.set(u32le(0), 0);                     // softdevice size
         sizes.set(u32le(0), 4);                     // bootloader size
-        sizes.set(u32le(input.firmware.length), 8); // application size
+        sizes.set(u32le(total), 8);                 // application size
         await ctl.writePacket(sizes);
-        checkResponse(await resp, OP_START_DFU);
+        checkResponse(await ev, OP_START_DFU);
 
         // 2. Init packet (.dat): begin -> stream -> complete.
         onProgress(0, 'Sending init packet');
         await ctl.writeControl([OP_INIT_DFU, 0x00]); // receive init packet
         await ctl.writePacket(input.initPacket);
-        resp = ctl.armResponse();
+        ev = ctl.armNext();
         await ctl.writeControl([OP_INIT_DFU, 0x01]); // init packet complete
-        checkResponse(await resp, OP_INIT_DFU);
+        checkResponse(await ev, OP_INIT_DFU);
 
         // 3. Configure packet-receipt notifications for flow control.
         await ctl.writeControl([OP_PRN_REQUEST, PRN_INTERVAL & 0xff, (PRN_INTERVAL >> 8) & 0xff]);
 
-        // 4. Receive firmware image with PRN pacing.
-        onProgress(0, 'Uploading');
-        const bin = input.firmware;
-        const total = bin.length;
-        resp = ctl.armResponse(60000); // completion arrives after the last packet
+        // 4. Start receiving the firmware image. The bootloader ERASES the
+        //    target flash bank now, which is slow (~90ms per 4KB page) and
+        //    blocking — if we stream during the erase its receive buffers
+        //    overflow and it aborts with OPERATION_FAILED. Wait for the erase
+        //    to finish (scaled to image size) before sending any data.
         await ctl.writeControl([OP_RECEIVE_IMAGE]);
+        const pages = Math.ceil(total / 4096);
+        const eraseMs = Math.min(12000, Math.max(2000, pages * 110 + 800));
+        onProgress(0, 'Preparing flash');
+        await sleep(eraseMs);
 
+        // 5. Stream the image with PRN pacing. We arm a waiter before the packet
+        //    that triggers a receipt (or the final completion response), so an
+        //    early error response is surfaced immediately instead of hanging.
+        onProgress(0, 'Uploading');
         let sent = 0;
-        let packetsSinceReceipt = 0;
+        let sinceReceipt = 0;
+        let finalEv: Promise<DataView> | null = null;
         while (sent < total) {
-          let receipt: Promise<number> | null = null;
-          // Send up to PRN_INTERVAL packets, then wait for a receipt (unless we
-          // finished the image, in which case the completion response follows).
-          while (packetsSinceReceipt < PRN_INTERVAL && sent < total) {
-            const len = Math.min(PACKET_CHUNK, total - sent);
-            if (packetsSinceReceipt === PRN_INTERVAL - 1 && sent + len < total) {
-              receipt = ctl.armReceipt(); // arm before the packet that triggers it
-            }
-            await BleClient.writeWithoutResponse(
-              bootloaderId, DFU_SERVICE, DFU_PACKET, toDataView(bin.subarray(sent, sent + len)),
-            );
-            sent += len;
-            packetsSinceReceipt++;
-          }
-          if (receipt) {
-            const ack = await receipt;
-            if (ack !== sent) throw new Error(`DFU: receipt offset mismatch (${ack} vs ${sent})`);
-            packetsSinceReceipt = 0;
+          const len = Math.min(PACKET_CHUNK, total - sent);
+          const isLast = sent + len >= total;
+          const atBatch = sinceReceipt + 1 >= PRN_INTERVAL && !isLast;
+          let ev2: Promise<DataView> | null = null;
+          if (isLast) finalEv = ctl.armNext(30000);
+          else if (atBatch) ev2 = ctl.armNext(20000);
+
+          await BleClient.writeWithoutResponse(
+            bootloaderId, DFU_SERVICE, DFU_PACKET, toDataView(bin.subarray(sent, sent + len)),
+          );
+          sent += len;
+          sinceReceipt++;
+
+          if (ev2) {
+            const dv = await ev2;
+            // A response (0x10) here means the bootloader aborted early.
+            if (dv.getUint8(0) === OP_RESPONSE) checkResponse(dv, OP_RECEIVE_IMAGE);
+            sinceReceipt = 0;
           }
           onProgress(Math.round((sent / total) * 100), 'Uploading');
         }
 
-        checkResponse(await resp, OP_RECEIVE_IMAGE);
+        checkResponse(await (finalEv ?? ctl.armNext(30000)), OP_RECEIVE_IMAGE);
 
-        // 5. Validate, then activate & reset (device reboots into the new app).
+        // 6. Validate, then activate & reset (device reboots into the new app).
         onProgress(100, 'Verifying');
-        resp = ctl.armResponse();
+        ev = ctl.armNext();
         await ctl.writeControl([OP_VALIDATE]);
-        checkResponse(await resp, OP_VALIDATE);
+        checkResponse(await ev, OP_VALIDATE);
 
         onProgress(100, 'Activating');
         try { await ctl.writeControl([OP_ACTIVATE_RESET]); } catch { /* reboots, no response */ }
