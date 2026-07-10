@@ -15,6 +15,7 @@
 #include <bluefruit.h>
 #include "persist.h"
 #include "hx711_helper.h"
+#include "reading_log.h"
 
 namespace OAConfig {
 
@@ -39,12 +40,26 @@ static uint8_t UUID_CALIB[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x06,0x00,0x00,0x0a
 };
 
+// History streaming (v1.0.9+): the phone drains the on-device reading log.
+//   Ctrl (0a...07, write 5 bytes): [0]=stream (0=weight,1=battery), [1..4]=afterSeq u32 LE
+//   Data (0a...08, notify): a run of fixed records, then a 1-byte 0x00 terminator.
+//     weight record  (11B): seq u32 LE, epoch u32 LE, weight_centi i16 LE, temp_half i8
+//     battery record (9B):  seq u32 LE, epoch u32 LE, batt u8
+static uint8_t UUID_HCTRL[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x07,0x00,0x00,0x0a
+};
+static uint8_t UUID_HDATA[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x08,0x00,0x00,0x0a
+};
+
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
 inline BLECharacteristic& timeChar() { static BLECharacteristic c(UUID_TIME);    return c; }
 inline BLECharacteristic& tareChar() { static BLECharacteristic c(UUID_TARE);    return c; }
 inline BLECharacteristic& sampleChar(){ static BLECharacteristic c(UUID_SAMPLE);  return c; }
 inline BLECharacteristic& calibChar(){ static BLECharacteristic c(UUID_CALIB);   return c; }
+inline BLECharacteristic& histCtrlChar(){ static BLECharacteristic c(UUID_HCTRL); return c; }
+inline BLECharacteristic& histDataChar(){ static BLECharacteristic c(UUID_HDATA); return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -54,10 +69,25 @@ static volatile bool     g_dirty = false;   // set when a write needs persisting
 
 static OAPersist::State* g_state = nullptr;
 
+// History streaming request state (set by the ctrl-char write callback, served
+// by pumpHistory() from the main.cpp session loop while connected).
+static volatile bool     g_histPending = false;
+static volatile uint8_t  g_histStream  = 0;   // 0 = weight, 1 = battery
+static volatile uint32_t g_histAfterSeq = 0;
+
 // Current UTC epoch derived from the seed, or 0 if we've never been told the time.
 inline uint32_t currentEpoch() {
     if (!g_haveTime) return 0;
     return g_seedEpoch + (uint32_t)((millis() - g_seedMillis) / 1000UL);
+}
+
+// Seed the clock from a value (used on boot to restore the persisted time
+// anchor, and internally by the Time-characteristic write). Marks time known.
+inline void seedTime(uint32_t epoch) {
+    if (epoch == 0) return;
+    g_seedEpoch = epoch;
+    g_seedMillis = millis();
+    g_haveTime = true;
 }
 
 // Local hour 0-23 using the persisted tz offset, or -1 if time unknown.
@@ -157,6 +187,17 @@ inline void onCalibrateWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t*
     (void)chr;
 }
 
+// History ctrl write: 5 bytes = [0] stream (0=weight,1=battery) + [1..4] afterSeq u32 LE.
+// Records the request; pumpHistory() (called from the main session loop) streams it.
+inline void onHistCtrlWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (len < 5) return;
+    g_histStream = data[0] ? 1 : 0;
+    g_histAfterSeq = (uint32_t)data[1] | ((uint32_t)data[2] << 8) |
+                     ((uint32_t)data[3] << 16) | ((uint32_t)data[4] << 24);
+    g_histPending = true;
+    (void)chr;
+}
+
 // Register the service + characteristics. Call after Bluefruit.begin().
 inline void begin(OAPersist::State* state) {
     g_state = state;
@@ -194,6 +235,17 @@ inline void begin(OAPersist::State* state) {
     calibChar().setMaxLen(4);
     calibChar().setWriteCallback(onCalibrateWrite);
     calibChar().begin();
+
+    histCtrlChar().setProperties(CHR_PROPS_WRITE);
+    histCtrlChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    histCtrlChar().setMaxLen(5);
+    histCtrlChar().setWriteCallback(onHistCtrlWrite);
+    histCtrlChar().begin();
+
+    histDataChar().setProperties(CHR_PROPS_NOTIFY);
+    histDataChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    histDataChar().setMaxLen(11);
+    histDataChar().begin();
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.
@@ -203,4 +255,62 @@ inline bool takeDirty() {
     return true;
 }
 
+// Notify one record with a few retries (the SoftDevice TX buffer holds only a
+// handful of packets). Returns false if it couldn't be sent (e.g. disconnected
+// or notifications not enabled) so the caller can stop.
+inline bool histNotify(const uint8_t* buf, uint16_t len) {
+    for (uint8_t attempt = 0; attempt < 20; attempt++) {
+        if (!Bluefruit.connected()) return false;
+        if (histDataChar().notify(buf, len)) return true;
+        delay(10);
+    }
+    return false;
+}
+
+// Stream any pending history request over the data characteristic. Called from
+// the main.cpp session loop while a phone is connected. Safe to call every
+// iteration; does nothing unless a ctrl write set g_histPending. Streaming is
+// resumable: the app tracks the highest seq it received and re-requests the
+// remainder on the next connection, so a backlog larger than one session is
+// fine.
+inline void pumpHistory() {
+    if (!g_histPending) return;
+    g_histPending = false;
+    if (!Bluefruit.connected()) return;
+
+    const uint8_t stream = g_histStream;
+    OALog::RingLog& log = (stream == 1) ? OALog::batteryLog() : OALog::weightLog();
+
+    uint32_t start = g_histAfterSeq + 1;
+    if (start < log.oldestSeq()) start = log.oldestSeq();
+
+    uint8_t rec[3];
+    for (uint32_t seq = start; seq < log.nextSeq; seq++) {
+        if (!log.readSeq(seq, rec)) continue;
+        uint32_t epoch = log.epochOf(seq);
+        if (stream == 1) {
+            uint8_t out[9];
+            out[0] = (uint8_t)seq; out[1] = (uint8_t)(seq >> 8);
+            out[2] = (uint8_t)(seq >> 16); out[3] = (uint8_t)(seq >> 24);
+            out[4] = (uint8_t)epoch; out[5] = (uint8_t)(epoch >> 8);
+            out[6] = (uint8_t)(epoch >> 16); out[7] = (uint8_t)(epoch >> 24);
+            out[8] = rec[0];
+            if (!histNotify(out, sizeof(out))) return;
+        } else {
+            uint8_t out[11];
+            out[0] = (uint8_t)seq; out[1] = (uint8_t)(seq >> 8);
+            out[2] = (uint8_t)(seq >> 16); out[3] = (uint8_t)(seq >> 24);
+            out[4] = (uint8_t)epoch; out[5] = (uint8_t)(epoch >> 8);
+            out[6] = (uint8_t)(epoch >> 16); out[7] = (uint8_t)(epoch >> 24);
+            out[8] = rec[0]; out[9] = rec[1]; out[10] = rec[2];
+            if (!histNotify(out, sizeof(out))) return;
+        }
+        if ((seq & 0x0F) == 0) delay(2);  // yield to the SoftDevice periodically
+    }
+    // Terminator: a 1-byte 0x00 notify signals "end of stream".
+    uint8_t term = 0x00;
+    histNotify(&term, 1);
+}
+
 } // namespace OAConfig
+

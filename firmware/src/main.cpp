@@ -22,6 +22,7 @@
 #include "bthome.h"
 #include "persist.h"
 #include "gatt_config.h"
+#include "reading_log.h"
 #include "version.h"
 
 // Buttonless OTA DFU — lets the phone push firmware over BLE during the pairing
@@ -38,9 +39,16 @@ static const uint8_t PIN_VBAT_EN   = 14;   // P0.14 - drive LOW to enable divide
 // PIN_VBAT (P0.31) is provided by the Adafruit core as PIN_VBAT
 
 // ---- Timing ----
-// Flat 1-minute wake/read/advert cycle (day and night the same). Simpler than
-// adaptive day/night scheduling; solar comfortably covers the extra draw.
-static const uint32_t WAKE_MS = 60UL * 1000UL;
+// BLE HEARTBEAT every minute: minimal power (no HX711 read) — keeps the scale
+// discoverable/connectable so the app can drain the log on demand, and carries
+// fresh battery/temp + the last-measured weight. The FULL SCALE READ (HX711)
+// runs every 15 min in summer / 1 h in winter (1 Nov–1 Mar) and is what gets
+// logged to flash. See docs + reading_log.h.
+static const uint32_t WAKE_MS = 60UL * 1000UL;                   // heartbeat cadence
+static const uint32_t SUMMER_MEAS_MS = 15UL * 60UL * 1000UL;     // full read every 15 min
+static const uint32_t WINTER_MEAS_MS = 60UL * 60UL * 1000UL;     // full read every 1 h (winter)
+static const uint32_t BATTERY_LOG_MS = 60UL * 60UL * 1000UL;     // battery logged hourly
+static const uint32_t TIME_ANCHOR_MS = 60UL * 60UL * 1000UL;     // persist time anchor hourly
 static const uint32_t PAIRING_WINDOW_MS = 60UL * 1000UL;        // connectable window after boot
 static const uint16_t ADVERT_DURATION_MS = 300;                  // 3 packets across ch 37/38/39
 // After each heartbeat the scale stays CONNECTABLE for this long so the app can
@@ -69,6 +77,35 @@ static const float BAT_DIVIDER_CAL = 0.7698f;
 // ---- Runtime state (loaded from /cal.txt at boot) ----
 static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
+
+// Last full scale reading — the heartbeat advert re-broadcasts these between
+// measurements (weight only changes every 15 min / 1 h). g_state.packetId is
+// the "measurement sequence": it increments ONLY on a full read, so the app
+// de-dups the repeated heartbeats and stores one row per measurement.
+static float g_lastWeightKg = NAN;
+static float g_lastTempC = 0.0f;
+
+// Month (1-12) in LOCAL time from a UTC epoch, using the persisted tz offset.
+// Civil-from-days (Howard Hinnant's algorithm).
+static int localMonthFromEpoch(uint32_t epochUtc) {
+    long local = (long)epochUtc + (long)g_state.tzOffsetMin * 60L;
+    long days = local / 86400L;
+    long z = days + 719468L;
+    long era = (z >= 0 ? z : z - 146096L) / 146097L;
+    unsigned doe = (unsigned)(z - era * 146097L);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned mp = (5 * doy + 2) / 153;
+    unsigned m = mp + (mp < 10 ? 3 : -9);
+    return (int)m;
+}
+
+// Winter = 1 Nov .. 1 Mar (months Nov, Dec, Jan, Feb) -> hourly full reads.
+static bool isWinter(uint32_t epochUtc) {
+    if (epochUtc == 0) return false;   // time unknown -> assume summer (more data)
+    int m = localMonthFromEpoch(epochUtc);
+    return (m >= 11 || m <= 2);
+}
 
 
 // Resolve the BLE local name: persisted friendly name if set, else OA-XXXX.
@@ -186,6 +223,11 @@ void setup() {
     g_state.bootCount++;
     OAPersist::save(g_state);   // always save on boot so we never lose the count
 
+    // 4b. On-device reading log + restore the persisted time anchor so records
+    //     stay roughly timestamped across a reboot until the app reseeds time.
+    OALog::begin();
+    OAConfig::seedTime(OALog::loadTimeAnchor());
+
     hx711_begin(PIN_HX711_DT, PIN_HX711_SCK, g_state.calFactor, g_state.tareOffset);
 
     // 5. Register the Config GATT service and run a short connectable pairing
@@ -212,6 +254,8 @@ static void runPairingWindow() {
     int   batteryPct = batteryPctFromVoltage(batteryV);
     float dieTempC   = readDieTempC();
     bool  charging   = vbusPresent();
+    g_lastWeightKg = weightKg;   // seed heartbeat's last-measured weight
+    g_lastTempC    = dieTempC;
 
     g_state.packetId++;
     uint8_t svcData[2 + 24];
@@ -248,6 +292,7 @@ static void runPairingWindow() {
     uint32_t end = millis() + PAIRING_WINDOW_MS;
     while ((int32_t)(end - millis()) > 0) {
         delay(100);
+        OAConfig::pumpHistory();                  // drain log if the app asked
         if (OAConfig::takeDirty()) {
             OAPersist::save(g_state);             // flush name / tz as soon as written
             // A new name should take effect immediately on the next advert.
@@ -265,30 +310,61 @@ static void runPairingWindow() {
 
 void loop() {
     static uint16_t cycleCount = 0;
+    static uint32_t lastMeasureMs = 0;
+    static uint32_t lastBatteryMs = 0;
+    static uint32_t lastAnchorMs = 0;
+    static bool     firstRun = true;
 
-    // 1. Wake HX711 and read
-    float weightKg = hx711_read_median(10);
-    uint16_t spread_g = hx711_last_spread_g();   // diagnostic; pack later if needed
-    hx711_sleep();
-    (void)spread_g;
+    uint32_t nowMs  = millis();
+    uint32_t epoch  = OAConfig::currentEpoch();          // 0 if time still unknown
+    bool     winter = isWinter(epoch);
+    uint32_t measIntervalMs  = winter ? WINTER_MEAS_MS : SUMMER_MEAS_MS;
+    uint16_t measIntervalSec = winter ? 3600 : 900;
 
-    // 2. Read battery (averaged ADC, see §4.2) + derived telemetry
+    // 1. FULL SCALE READ (HX711) on the measurement cadence. Between reads the
+    //    loop is a heartbeat only (no HX711) — minimal power.
+    bool measureDue = firstRun || (nowMs - lastMeasureMs) >= measIntervalMs;
+    if (measureDue) {
+        float w = hx711_read_median(10);
+        hx711_sleep();
+        float t = readDieTempC();
+        g_lastWeightKg = w;
+        g_lastTempC    = t;
+        g_state.packetId++;                              // measurement sequence (advert packet id)
+        OALog::logWeight(w, t, epoch, measIntervalSec);  // -> flash ring buffer
+        lastMeasureMs = nowMs;
+        firstRun = false;
+    }
+
+    // 2. Battery: fresh read every heartbeat (for the advert); logged hourly.
     float batteryV   = readBatteryVoltage();
     int   batteryPct = batteryPctFromVoltage(batteryV);
-    float dieTempC   = readDieTempC();
-    bool  charging   = vbusPresent();   // true while USB / solar regulator delivers 5V
+    if (lastBatteryMs == 0 || (nowMs - lastBatteryMs) >= BATTERY_LOG_MS) {
+        OALog::logBattery(batteryV, epoch);
+        lastBatteryMs = nowMs;
+    }
 
-    // 3. Build BTHome v2 service-data payload
-    // Service-data AD type (0x16) must start with the 16-bit UUID in little-endian,
-    // followed by the BTHome payload bytes.
-    g_state.packetId++;                       // wraps the 8-bit advert field at the cast below
+    // 3. Persist the time anchor hourly so logs stay timestamped across a reboot.
+    if (epoch != 0 && (lastAnchorMs == 0 || (nowMs - lastAnchorMs) >= TIME_ANCHOR_MS)) {
+        OALog::saveTimeAnchor(epoch);
+        lastAnchorMs = nowMs;
+    }
+
+    // 4. HEARTBEAT advert: last-measured weight + fresh battery/temp + fw version.
+    //    packetId is the measurement sequence (unchanged between reads), so the
+    //    app de-dups repeated heartbeats and stores one row per measurement; the
+    //    exact per-minute-independent history comes from draining the flash log.
+    float dieTempC  = readDieTempC();
+    bool  charging  = vbusPresent();
+    float advWeight = isnan(g_lastWeightKg) ? 0.0f : g_lastWeightKg;
+
     uint8_t svcData[2 + 24];
     svcData[0] = (uint8_t)(BTHOME_SERVICE_UUID_16 & 0xFF);
     svcData[1] = (uint8_t)(BTHOME_SERVICE_UUID_16 >> 8);
     size_t payloadLen = bthome_build_payload(
         svcData + 2, sizeof(svcData) - 2,
         (uint8_t)(g_state.packetId & 0xFF),
-        weightKg,
+        advWeight,
         batteryV,
         dieTempC,
         batteryPct,
@@ -297,7 +373,6 @@ void loop() {
         OA_FW_MAJOR, OA_FW_MINOR, OA_FW_PATCH   // 0xF2 firmware version for the app to read passively
     );
 
-    // 4. Advertise for 300 ms
     // Friendly name (custom or "OA-XXXX") must be set BEFORE addName().
     char name[17];
     resolveLocalName(name, sizeof(name));
@@ -309,10 +384,9 @@ void loop() {
     Bluefruit.Advertising.addData(BLE_GAP_AD_TYPE_SERVICE_DATA,
                                   svcData, (uint8_t)(2 + payloadLen));
     Bluefruit.ScanResponse.addName();
-    // Connectable-scannable: the scale broadcasts its reading AND accepts a
-    // connection for a short window each cycle so the app can tare / calibrate
-    // / read diagnostics without anyone touching the device. We don't auto-
-    // restart on disconnect — loop() owns the advertise/sleep cadence.
+    // Connectable-scannable: the scale broadcasts its heartbeat AND accepts a
+    // connection for a short window each cycle so the app can tare / calibrate /
+    // read diagnostics / drain the log without anyone touching the device.
     Bluefruit.Advertising.restartOnDisconnect(false);
     Bluefruit.Advertising.setType(BLE_GAP_ADV_TYPE_CONNECTABLE_SCANNABLE_UNDIRECTED);
     Bluefruit.Advertising.setInterval(160, 244);  // 100 ms / 152.5 ms
@@ -324,12 +398,13 @@ void loop() {
         delay(50);
     }
 
-    // If the app connected, hold the session open (servicing tare/sample/name/
-    // time writes via the GATT callbacks) until it disconnects or the safety cap.
+    // If the app connected, hold the session open (tare/sample/name/time writes
+    // + history drain via pumpHistory) until it disconnects or the safety cap.
     if (Bluefruit.connected()) {
         uint32_t sessionEnd = millis() + SESSION_MAX_MS;
         while (Bluefruit.connected() && (int32_t)(sessionEnd - millis()) > 0) {
             delay(100);
+            OAConfig::pumpHistory();
             if (OAConfig::takeDirty()) {
                 OAPersist::save(g_state);
                 resolveLocalName(name, sizeof(name));
@@ -347,7 +422,7 @@ void loop() {
         cycleCount = 0;
     }
 
-    // 6. Sleep until next cycle (FreeRTOS idle -> __WFE; see header comment).
+    // 6. Sleep until next heartbeat (FreeRTOS idle -> __WFE; see header comment).
     delay(WAKE_MS);
 }
 

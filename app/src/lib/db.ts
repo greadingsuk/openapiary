@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS hive_clear_markers (
   hive_id TEXT PRIMARY KEY,
   cleared_before_ts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hive_sync (
+  hive_id TEXT PRIMARY KEY,
+  last_weight_seq INTEGER NOT NULL DEFAULT 0,
+  last_battery_seq INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 let db: SQLiteDBConnection | null = null;
@@ -48,6 +53,7 @@ const memReadings: Array<Reading & { synced: number }> = [];
 const memHives = new Map<string, Hive>();
 const memDeletedReadings = new Map<string, Set<number>>();
 const memClearMarkers = new Map<string, number>();
+const memSyncState = new Map<string, { lastWeightSeq: number; lastBatterySeq: number }>();
 let useMemory = false;
 
 // Synchronous, race-free guard against the scale re-broadcasting the same
@@ -230,6 +236,34 @@ export async function insertReading(r: Reading): Promise<void> {
   );
 }
 
+// Backfill rows drained from the scale's on-device log. Unlike insertReading,
+// this does NOT apply the live-advert packet-id de-dup guard (historical seqs
+// share the packet-id space with live adverts); duplicates are prevented by the
+// (hive_id, ts) primary key. Honours deletion / clear-marker suppression.
+export async function insertHistoricalReadings(hiveId: string, rows: Reading[]): Promise<number> {
+  await initDb();
+  let added = 0;
+  for (const r of rows) {
+    if (useMemory) {
+      if (isSuppressedInMemory(hiveId, r.ts)) continue;
+      if (memReadings.some((m) => m.hive_id === hiveId && m.ts === r.ts)) continue;
+      memReadings.push({ ...r, hive_id: hiveId, synced: 0 });
+      added++;
+      continue;
+    }
+    if (await isSuppressedInDb(hiveId, r.ts)) continue;
+    await db!.run(
+      `INSERT OR IGNORE INTO readings
+        (hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi, synced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+      [hiveId, r.ts, r.weight_kg ?? null, r.battery_v ?? null,
+       r.temp_c ?? null, r.packet_id ?? null, r.rssi ?? null],
+    );
+    added++;
+  }
+  return added;
+}
+
 export async function unsyncedByHive(): Promise<Map<string, Reading[]>> {
   await initDb();
   const out = new Map<string, Reading[]>();
@@ -275,6 +309,41 @@ export async function unsyncedCount(): Promise<number> {
   if (useMemory) return memReadings.filter((r) => !r.synced).length;
   const res = await db!.query('SELECT COUNT(*) AS n FROM readings WHERE synced = 0');
   return (res.values?.[0] as { n: number } | undefined)?.n ?? 0;
+}
+
+/** Highest on-device log seq already drained for a hive (0 = none yet). */
+export async function getSyncState(hiveId: string): Promise<{ lastWeightSeq: number; lastBatterySeq: number }> {
+  await initDb();
+  if (useMemory) {
+    return memSyncState.get(hiveId) ?? { lastWeightSeq: 0, lastBatterySeq: 0 };
+  }
+  const res = await db!.query(
+    'SELECT last_weight_seq, last_battery_seq FROM hive_sync WHERE hive_id = ? LIMIT 1',
+    [hiveId],
+  );
+  const row = res.values?.[0] as { last_weight_seq?: number; last_battery_seq?: number } | undefined;
+  return { lastWeightSeq: row?.last_weight_seq ?? 0, lastBatterySeq: row?.last_battery_seq ?? 0 };
+}
+
+/** Record the highest drained log seq for a hive (monotonic; never goes back). */
+export async function setSyncState(hiveId: string, lastWeightSeq: number, lastBatterySeq: number): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    const cur = memSyncState.get(hiveId) ?? { lastWeightSeq: 0, lastBatterySeq: 0 };
+    memSyncState.set(hiveId, {
+      lastWeightSeq: Math.max(cur.lastWeightSeq, lastWeightSeq),
+      lastBatterySeq: Math.max(cur.lastBatterySeq, lastBatterySeq),
+    });
+    return;
+  }
+  await db!.run(
+    `INSERT INTO hive_sync (hive_id, last_weight_seq, last_battery_seq)
+     VALUES (?, ?, ?)
+     ON CONFLICT(hive_id) DO UPDATE SET
+       last_weight_seq  = MAX(hive_sync.last_weight_seq, excluded.last_weight_seq),
+       last_battery_seq = MAX(hive_sync.last_battery_seq, excluded.last_battery_seq)`,
+    [hiveId, lastWeightSeq, lastBatterySeq],
+  );
 }
 
 // ---------------------------------------------------------------------------

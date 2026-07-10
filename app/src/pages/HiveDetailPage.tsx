@@ -4,7 +4,7 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
@@ -16,6 +16,7 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
+import { syncDeviceHistory } from '../lib/history';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
@@ -121,6 +122,22 @@ const HiveDetailPage: React.FC = () => {
     setSelectMode(false);
     await load();
     setToast('Readings deleted');
+  }
+
+  // Pull the scale's on-device log over BLE to backfill gaps passive scanning
+  // missed (firmware v1.0.9+). Best-effort; needs the scale nearby and awake.
+  async function doSyncHistory() {
+    setToast('Syncing history from the scale\u2026');
+    try {
+      const res = await syncDeviceHistory(id, id.toUpperCase(), latest?.battery_v ?? undefined);
+      if (!res.found) { setToast('Scale not found \u2014 make sure it is nearby and awake.'); return; }
+      await load();
+      setToast(res.added > 0
+        ? `Synced ${res.added} reading${res.added === 1 ? '' : 's'} from the scale.`
+        : 'Already up to date with the scale.');
+    } catch (e: unknown) {
+      setToast(`History sync failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   const now = Date.now();
@@ -286,6 +303,7 @@ const HiveDetailPage: React.FC = () => {
 
         <IonActionSheet isOpen={showMenu} onDidDismiss={() => setShowMenu(false)} header={name}
           buttons={[
+            { text: 'Sync history from scale', icon: cloudDownloadOutline, handler: () => { void doSyncHistory(); } },
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
             { text: 'Firmware update', icon: hardwareChipOutline, handler: () => router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward') },

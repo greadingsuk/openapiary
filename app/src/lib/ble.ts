@@ -122,6 +122,8 @@ export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 by
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
 export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 2 bytes: u16 known weight grams LE -> recompute factor
+export const OA_CHAR_HIST_CTRL = '0a000007-0a51-4000-b000-000000000001'; // 5 bytes: [0]=stream(0=weight,1=battery) + [1..4]=afterSeq u32 LE
+export const OA_CHAR_HIST_DATA = '0a000008-0a51-4000-b000-000000000001'; // notify: fixed records then a 1-byte 0x00 terminator
 
 export interface OADiagnostics {
   weightKg: number;
@@ -275,6 +277,82 @@ export async function readDiagnosticsConnected(deviceId: string): Promise<OADiag
   }
   if (lastSample) return parseDiagnostics(lastSample); // surfaces the scale's error
   throw new Error('No diagnostics received from the scale.');
+}
+
+// ---------------------------------------------------------------------------
+// History drain (v1.0.9+): pull the scale's on-device reading log so the app
+// backfills the minute-by-minute gaps it can't capture passively (iOS can't
+// background-scan every advert). Two streams (weight/temp + battery), each
+// resumable: we pass the highest seq we already hold and the scale sends only
+// newer records, terminated by a 1-byte notify.
+// ---------------------------------------------------------------------------
+
+export interface HistWeightRecord { seq: number; epoch: number; weightKg: number; tempC: number; }
+export interface HistBatteryRecord { seq: number; epoch: number; batteryV: number; }
+export interface DrainedHistory { weight: HistWeightRecord[]; battery: HistBatteryRecord[]; }
+
+async function collectStream<T>(
+  deviceId: string,
+  stream: 0 | 1,
+  afterSeq: number,
+  minLen: number,
+  parse: (dv: DataView) => T,
+): Promise<T[]> {
+  const out: T[] = [];
+  let resolveDone: () => void = () => undefined;
+  const done = new Promise<void>((res) => { resolveDone = res; });
+
+  await BleClient.startNotifications(
+    deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_DATA,
+    (value) => {
+      const b = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      if (b.length <= 1) { resolveDone(); return; }   // terminator
+      if (b.length >= minLen) {
+        out.push(parse(new DataView(b.buffer, b.byteOffset, b.byteLength)));
+      }
+    },
+  );
+  try {
+    const ctrl = new DataView(new ArrayBuffer(5));
+    ctrl.setUint8(0, stream);
+    ctrl.setUint32(1, afterSeq >>> 0, true);
+    await BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_CTRL, ctrl);
+    // Wait for the terminator; on timeout we keep whatever arrived (resumable
+    // next connection since we track the max seq received).
+    await withTimeout(done, 90000, 'History stream').catch(() => undefined);
+  } finally {
+    try { await BleClient.stopNotifications(deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_DATA); } catch { /* ignore */ }
+  }
+  return out;
+}
+
+/**
+ * Drain both history streams on an already-open connection. `sinceWeightSeq` /
+ * `sinceBatterySeq` are the highest seq already stored locally (0 = pull all).
+ */
+export async function drainHistoryConnected(
+  deviceId: string,
+  sinceWeightSeq: number,
+  sinceBatterySeq: number,
+): Promise<DrainedHistory> {
+  const weight = await collectStream<HistWeightRecord>(
+    deviceId, 0, sinceWeightSeq, 11,
+    (dv) => ({
+      seq: dv.getUint32(0, true),
+      epoch: dv.getUint32(4, true),
+      weightKg: dv.getInt16(8, true) / 100,
+      tempC: dv.getInt8(10) / 2,
+    }),
+  );
+  const battery = await collectStream<HistBatteryRecord>(
+    deviceId, 1, sinceBatterySeq, 9,
+    (dv) => ({
+      seq: dv.getUint32(0, true),
+      epoch: dv.getUint32(4, true),
+      batteryV: 2.5 + dv.getUint8(8) * 0.02,
+    }),
+  );
+  return { weight, battery };
 }
 
 /**
