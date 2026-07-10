@@ -206,7 +206,7 @@ const HiveDetailPage: React.FC = () => {
               <StatusDot freshness={f} />
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="oa-numeral font-bold" style={{ fontSize: 56, lineHeight: 1, color: 'var(--oa-ink)' }}>
-                  {latest?.weight_kg != null ? latest.weight_kg.toFixed(1) : '--'}
+                  {latest?.weight_kg != null ? latest.weight_kg.toFixed(2) : '--'}
                 </span>
                 <span className="text-lg oa-muted">kg</span>
               </div>
@@ -235,7 +235,7 @@ const HiveDetailPage: React.FC = () => {
                   <div key={l as string} className="flex flex-col">
                     <span className="text-xs oa-subtle">{l as string}</span>
                     <span className="oa-numeral font-semibold" style={{ color: 'var(--oa-ink)' }}>
-                      {v != null ? (v as number).toFixed(1) : '--'} kg
+                      {v != null ? (v as number).toFixed(2) : '--'} kg
                     </span>
                   </div>
                 ))}

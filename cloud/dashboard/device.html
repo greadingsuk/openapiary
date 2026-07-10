@@ -143,7 +143,7 @@ const $ = (id) => document.getElementById(id);
 const LS_URL = 'oa.fleet.apiUrl';
 const LS_KEY = 'oa.fleet.apiKey';
 
-const apiUrl = (localStorage.getItem(LS_URL) || 'https://oa-api-staging.grantjreadings.workers.dev').replace(/\/$/, '');
+const apiUrl = (localStorage.getItem(LS_URL) || 'https://api.openapiary.co.uk').replace(/\/$/, '');
 const apiKey = localStorage.getItem(LS_KEY) || '';
 const hiveId = new URLSearchParams(location.search).get('hive') || '';
 

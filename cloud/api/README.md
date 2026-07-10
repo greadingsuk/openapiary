@@ -26,7 +26,6 @@ collide in the dashboard, in `wrangler.toml`, in secrets, or in D1 names.
 | Surface | URL |
 |---|---|
 | API (primary) | `https://api.openapiary.co.uk` |
-| API (legacy fallback) | `https://api.openapiaryproject.com` |
 | Admin dashboard | `https://openapiary.co.uk` |
 
 ## One-time bootstrap

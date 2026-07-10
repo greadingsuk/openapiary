@@ -2,11 +2,12 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet,
+  IonActionSheet, IonToast, IonSpinner,
 } from '@ionic/react';
-import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline } from 'ionicons/icons';
+import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline, syncOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { listHives } from '../lib/api';
+import { syncNearbyKnownHives } from '../lib/nearbySync';
 import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
@@ -26,6 +27,26 @@ const HiveListPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>('name');
   const [sortOpen, setSortOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Bottom-left FAB: live BLE sweep for the caller's scales, then cloud sync.
+  // (Pull-to-refresh only re-reads stored/cloud data — it does not scan.)
+  async function runNearbySync() {
+    if (syncing) return;
+    setSyncing(true);
+    setToast('Scanning for your scales nearby (up to ~60s)…');
+    try {
+      const r = await syncNearbyKnownHives(65000, hives.map((h) => h.id));
+      await load();
+      const cloudBits = r.cloud.attempted ? `, ${r.cloud.succeeded}/${r.cloud.attempted} uploaded` : '';
+      setToast(`Heard ${r.heard} scale(s), ${r.stored} reading(s) captured${cloudBits}.`);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function load() {
     setError(null);
@@ -94,7 +115,7 @@ const HiveListPage: React.FC = () => {
         </div>
         <div className="flex flex-col items-end shrink-0 pl-3">
           <span className="oa-numeral text-2xl font-bold leading-none" style={{ color: 'var(--oa-honey-700)' }}>
-            {r?.weight_kg != null ? r.weight_kg.toFixed(1) : '--'}
+            {r?.weight_kg != null ? r.weight_kg.toFixed(2) : '--'}
           </span>
           <span className="text-xs oa-muted">kg</span>
         </div>
@@ -149,11 +170,17 @@ const HiveListPage: React.FC = () => {
           </div>
         )}
 
+        <IonFab slot="fixed" vertical="bottom" horizontal="start">
+          <IonFabButton onClick={runNearbySync} disabled={syncing} aria-label="Scan nearby scales and sync now">
+            {syncing ? <IonSpinner name="crescent" /> : <IonIcon icon={syncOutline} />}
+          </IonFabButton>
+        </IonFab>
         <IonFab slot="fixed" vertical="bottom" horizontal="end">
           <IonFabButton routerLink="/add" aria-label="Scan for a hive">
             <IonIcon icon={add} />
           </IonFabButton>
         </IonFab>
+        <IonToast isOpen={!!toast} message={toast ?? ''} duration={4000} onDidDismiss={() => setToast(null)} />
 
         <IonActionSheet
           isOpen={sortOpen}

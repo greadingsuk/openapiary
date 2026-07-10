@@ -242,26 +242,32 @@ export async function insertReading(r: Reading): Promise<void> {
 // (hive_id, ts) primary key. Honours deletion / clear-marker suppression.
 export async function insertHistoricalReadings(hiveId: string, rows: Reading[]): Promise<number> {
   await initDb();
-  let added = 0;
-  for (const r of rows) {
-    if (useMemory) {
+  if (useMemory) {
+    let added = 0;
+    for (const r of rows) {
       if (isSuppressedInMemory(hiveId, r.ts)) continue;
       if (memReadings.some((m) => m.hive_id === hiveId && m.ts === r.ts)) continue;
       memReadings.push({ ...r, hive_id: hiveId, synced: 0 });
       added++;
-      continue;
     }
+    return added;
+  }
+  // Build the batch (skipping user-cleared timestamps) and insert it in a SINGLE
+  // transaction, so an interrupted drain can't leave a half-written batch.
+  // INSERT OR IGNORE + the UNIQUE(hive_id, ts) key still dedupe on any retry.
+  const set: { statement: string; values: (string | number | null)[] }[] = [];
+  for (const r of rows) {
     if (await isSuppressedInDb(hiveId, r.ts)) continue;
-    await db!.run(
-      `INSERT OR IGNORE INTO readings
+    set.push({
+      statement: `INSERT OR IGNORE INTO readings
         (hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi, synced)
        VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-      [hiveId, r.ts, r.weight_kg ?? null, r.battery_v ?? null,
-       r.temp_c ?? null, r.packet_id ?? null, r.rssi ?? null],
-    );
-    added++;
+      values: [hiveId, r.ts, r.weight_kg ?? null, r.battery_v ?? null,
+               r.temp_c ?? null, r.packet_id ?? null, r.rssi ?? null],
+    });
   }
-  return added;
+  if (set.length) await db!.executeSet(set);
+  return set.length;
 }
 
 export async function unsyncedByHive(): Promise<Map<string, Reading[]>> {

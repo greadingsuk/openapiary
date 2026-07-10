@@ -91,7 +91,7 @@ export default function HiveVisual({
     const centres = combCenters(120, 130);
     const ring = centres.slice(1);
     const a11y = weightKg != null
-        ? `Hive ${name ?? ''} weight ${weightKg.toFixed(1)} kilograms, ${Math.round(filledFraction * 100)} percent full${live ? ', live' : ''}`
+        ? `Hive ${name ?? ''} weight ${weightKg.toFixed(2)} kilograms, ${Math.round(filledFraction * 100)} percent full${live ? ', live' : ''}`
         : `Hive ${name ?? ''}, no recent reading`;
 
     return (
@@ -134,7 +134,7 @@ export default function HiveVisual({
                     fill="var(--oa-on-accent)"
                     style={{ fontFamily: 'var(--oa-font-display)', fontVariantNumeric: 'tabular-nums' }}
                 >
-                    {weightKg != null ? displayKg.toFixed(1) : "--"}
+                    {weightKg != null ? displayKg.toFixed(2) : "--"}
                 </text>
                 <text
                     x={centres[0][0]}

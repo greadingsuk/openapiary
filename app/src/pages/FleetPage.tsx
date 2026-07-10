@@ -87,7 +87,7 @@ const FleetPage: React.FC = () => {
             <div className="grid grid-cols-3 gap-3 px-4 py-4">
               <StatTile label="Hives" value={hives.length} />
               <StatTile label="Live" value={liveCount} accent />
-              <StatTile label="Total" value={totalWeight.toFixed(1)} unit="kg" />
+              <StatTile label="Total" value={totalWeight.toFixed(2)} unit="kg" />
             </div>
 
             <h2 className="oa-section px-4 pt-2 pb-1 text-sm oa-subtle">

@@ -14,7 +14,7 @@ const KEY = 'openapiary.settings.v1';
 const DEFAULTS: Settings = {
   apiUrl: 'https://api.openapiary.co.uk',
   apiKey: '',
-  syncEnabled: true,
+  syncEnabled: false,
   backgroundScan: false,
   accountEmail: null,
 };
