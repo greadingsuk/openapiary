@@ -123,13 +123,17 @@ inline void onTimeWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data
     (void)chr;
 }
 
-// Tare write: capture current raw as the zero offset, apply immediately, mark dirty.
+// Tare write: capture current raw as the zero offset, apply immediately, persist now.
 inline void onTareWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*data*/, uint16_t /*len*/) {
     if (!g_state) return;
     long raw = hx711_read_raw_average(20);
     g_state->tareOffset = raw;
     hx711_set_offset(raw);
     g_dirty = true;
+    // Persist to flash inside the callback (not just via the loop's dirty check):
+    // a reboot right after taring — e.g. a solar/battery brown-out overnight —
+    // must not revert tareOffset to 0 and make readings include the platform.
+    OAPersist::save(*g_state);
     (void)chr;
 }
 
@@ -183,6 +187,7 @@ inline void onCalibrateWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t*
         g_state->calFactor = f;
         hx711_set_scale(f);
         g_dirty = true;
+        OAPersist::save(*g_state);   // persist immediately (same reboot-safety as tare)
     }
     (void)chr;
 }

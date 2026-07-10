@@ -251,9 +251,11 @@ LiPo of usable energy at 3V regulated). The techniques are:
 > **Update 2026-07-06 — consolidated to production-only on `openapiary.co.uk`.**
 > Staging (`oa-api-staging`) has been retired from `wrangler.toml`; everything
 > ships live to `oa-api-prod`. The API is served at **`https://api.openapiary.co.uk`**
-> (legacy `api.openapiaryproject.com` kept as a temporary fallback), and the admin
+> (the old `api.openapiaryproject.com` is now **decommissioned** — it no longer
+> resolves; do not reference it), and the admin
 > dashboard at **`https://openapiary.co.uk`** (Pages project `oa-fleet`). The app
-> pins its API URL to the new domain and cloud sync is on by default. New
+> pins its API URL to the new domain and cloud sync is **opt-in** (off until you
+> sign in). New
 > endpoint added: `DELETE /v1/hives/:id/readings` (idempotent; supports `?ts=` for
 > selective deletes or all readings when omitted).
 
