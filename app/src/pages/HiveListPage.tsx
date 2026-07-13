@@ -40,7 +40,16 @@ const HiveListPage: React.FC = () => {
       const r = await syncNearbyKnownHives(65000, hives.map((h) => h.id));
       await load();
       const cloudBits = r.cloud.attempted ? `, ${r.cloud.succeeded}/${r.cloud.attempted} uploaded` : '';
-      setToast(`Heard ${r.heard} scale(s), ${r.stored} reading(s) captured${cloudBits}.`);
+      if (r.heard === 0) {
+        setToast('No scales heard nearby. Make sure a scale is powered and within range.');
+      } else if (r.stored === 0) {
+        // Heard the scale but its live advert was already stored. A scan only
+        // grabs one live sample; use a hive's "Sync history from scale" to pull
+        // the full 15-min on-device log.
+        setToast(`Heard ${r.heard} scale(s) — already up to date${cloudBits}. Open a hive and "Sync history from scale" for the full log.`);
+      } else {
+        setToast(`Heard ${r.heard} scale(s), ${r.stored} new reading(s) captured${cloudBits}.`);
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {

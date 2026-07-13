@@ -189,18 +189,26 @@ export async function upsertHive(h: Hive): Promise<void> {
   );
 }
 
-export async function insertReading(r: Reading): Promise<void> {
+/**
+ * Store a single live-advert reading. Returns `true` only when a NEW row was
+ * actually written, and `false` when the reading was de-duplicated, suppressed,
+ * or collided on the (hive_id, ts) key. Callers use this to report the number
+ * of readings genuinely captured, not the number of adverts heard — the scale
+ * re-broadcasts the same packet many times per cycle, so most adverts are
+ * duplicates that write nothing.
+ */
+export async function insertReading(r: Reading): Promise<boolean> {
   // Race-free duplicate guard: runs before any await so two advert callbacks
   // for the same packet in one tick can't both slip past. See lastPacketByHive.
   if (r.packet_id != null) {
-    if (lastPacketByHive.get(r.hive_id) === r.packet_id) return;
+    if (lastPacketByHive.get(r.hive_id) === r.packet_id) return false;
     lastPacketByHive.set(r.hive_id, r.packet_id);
   }
   await initDb();
   if (useMemory) {
-    if (isSuppressedInMemory(r.hive_id, r.ts)) return;
+    if (isSuppressedInMemory(r.hive_id, r.ts)) return false;
   } else if (await isSuppressedInDb(r.hive_id, r.ts)) {
-    return;
+    return false;
   }
 
   // De-duplicate repeated adverts: the scale re-broadcasts the same payload
@@ -212,28 +220,33 @@ export async function insertReading(r: Reading): Promise<void> {
       for (const m of memReadings) {
         if (m.hive_id === r.hive_id && (!newest || m.ts > newest.ts)) newest = m;
       }
-      if (newest && newest.packet_id === r.packet_id) return;
+      if (newest && newest.packet_id === r.packet_id) return false;
     } else {
       const res = await db!.query(
         'SELECT packet_id FROM readings WHERE hive_id = ? ORDER BY ts DESC LIMIT 1',
         [r.hive_id],
       );
       const lastPid = (res.values?.[0] as { packet_id: number | null } | undefined)?.packet_id;
-      if (lastPid != null && lastPid === r.packet_id) return;
+      if (lastPid != null && lastPid === r.packet_id) return false;
     }
   }
 
   if (useMemory) {
+    // Match the native (hive_id, ts) primary key so a repeated advert with the
+    // same timestamp can't double-insert in dev (keeps the captured count honest).
+    if (memReadings.some((m) => m.hive_id === r.hive_id && m.ts === r.ts)) return false;
     memReadings.push({ ...r, synced: 0 });
-    return;
+    return true;
   }
-  await db!.run(
+  const res = await db!.run(
     `INSERT OR IGNORE INTO readings
       (hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi, synced)
      VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
     [r.hive_id, r.ts, r.weight_kg ?? null, r.battery_v ?? null,
      r.temp_c ?? null, r.packet_id ?? null, r.rssi ?? null],
   );
+  // INSERT OR IGNORE writes 0 rows when the (hive_id, ts) key already exists.
+  return (res.changes?.changes ?? 0) > 0;
 }
 
 // Backfill rows drained from the scale's on-device log. Unlike insertReading,

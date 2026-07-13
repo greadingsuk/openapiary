@@ -12,9 +12,13 @@ export interface NearbySyncResult {
 /**
  * BLE sweep for the caller's hives, then cloud sync. Scales broadcast about
  * once a minute, so we scan up to `scanMs` but stop early once every expected
- * hive has been heard. Every `OA-` scale heard is stored (and its hive created
- * locally if needed), so this also works right after a reinstall when the local
- * DB is empty but hives exist in the cloud.
+ * hive has been heard. Each heard `OA-` scale has its hive created locally (if
+ * needed) and its current live advert stored — but the scale re-broadcasts the
+ * same packet many times, so `stored` counts only the rows genuinely written
+ * (new readings), not adverts heard. A scan grabs at most one live sample per
+ * scale; draining the on-device 15-min log is `syncDeviceHistory` (history.ts).
+ * Works right after a reinstall when the local DB is empty but hives exist in
+ * the cloud.
  *
  * `expectedIds` are the hive ids currently shown on the home list (which may
  * include cloud-only hives not yet in the local DB). They're only used to know
@@ -38,7 +42,7 @@ export async function syncNearbyKnownHives(scanMs = 65000, expectedIds?: string[
       heardIds.add(hiveId);
       await upsertHive({ id: hiveId, name: a.deviceName, created_at: Date.now() });
       if (a.fwVersion) await recordDeviceMeta(hiveId, { fw: a.fwVersion });
-      await insertReading({
+      const inserted = await insertReading({
         hive_id: hiveId,
         ts: a.ts,
         weight_kg: a.weightKg,
@@ -47,7 +51,9 @@ export async function syncNearbyKnownHives(scanMs = 65000, expectedIds?: string[
         packet_id: a.packetId,
         rssi: a.rssi,
       });
-      stored += 1;
+      // Count rows actually written, not adverts heard — the scale re-broadcasts
+      // the same packet many times, so most adverts de-dup to nothing.
+      if (inserted) stored += 1;
       // Stop early once every expected hive has checked in.
       if (expected.size > 0 && [...expected].every((k) => heardIds.has(k))) {
         clearTimeout(timer);
