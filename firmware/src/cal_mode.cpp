@@ -20,6 +20,7 @@
 #include "hx711_helper.h"
 #include "persist.h"
 #include "bthome.h"
+#include "reading_log.h"
 
 static const uint8_t PIN_HX711_DT  = D2;
 static const uint8_t PIN_HX711_SCK = D3;
@@ -143,7 +144,7 @@ void enterCalibrationMode() {
 
     Serial.println();
     Serial.println(F("=== OpenApiary calibration mode ==="));
-    Serial.println(F("commands: tare | cal <kg> | raw [n] | mon [int_s] [dur_s] | batcal <V> | show | save | ble [s] | reboot | exit"));
+    Serial.println(F("commands: tare | cal <kg> | raw [n] | mon [int_s] [dur_s] | cfg | logs | diagtest [n] | batcal <V> | show | save | ble [s] | reboot | exit"));
 
     OAPersist::begin();
     OAPersist::seedDefaults(g_state);
@@ -276,6 +277,38 @@ void enterCalibrationMode() {
         else if (line == "save") {
             OAPersist::save(g_state);
             Serial.println(F("saved"));
+        }
+        else if (line == "cfg") {
+            Serial.print(F("summer hb=")); Serial.print(g_state.summerHeartbeatSec);
+            Serial.print(F("s rd=")); Serial.print(g_state.summerReadingSec);
+            Serial.print(F("s | winter hb=")); Serial.print(g_state.winterHeartbeatSec);
+            Serial.print(F("s rd=")); Serial.print(g_state.winterReadingSec);
+            Serial.print(F("s | debugLog=")); Serial.println(g_state.debugLog);
+        }
+        else if (line == "logs") {
+            // Initialise the flash rings exactly as a normal boot would, then
+            // report each one. If this prints without hanging and the seqs load,
+            // the InternalFS budget accommodates the diag ring alongside the rest.
+            OALog::begin();
+            Serial.print(F("weight  seq=")); Serial.print(OALog::weightLog().nextSeq);
+            Serial.print(F(" oldest=")); Serial.print(OALog::weightLog().oldestSeq());
+            Serial.print(F(" cap=")); Serial.println(OALog::weightLog().capacity);
+            Serial.print(F("battery seq=")); Serial.print(OALog::batteryLog().nextSeq);
+            Serial.print(F(" oldest=")); Serial.print(OALog::batteryLog().oldestSeq());
+            Serial.print(F(" cap=")); Serial.println(OALog::batteryLog().capacity);
+            Serial.print(F("diag    seq=")); Serial.print(OALog::diagLog().nextSeq);
+            Serial.print(F(" oldest=")); Serial.print(OALog::diagLog().oldestSeq());
+            Serial.print(F(" cap=")); Serial.println(OALog::diagLog().capacity);
+        }
+        else if (line == "diagtest" || line.startsWith("diagtest ")) {
+            OALog::begin();
+            int nrec = 5;
+            if (line.length() > 9) { long v = line.substring(9).toInt(); if (v > 0 && v <= 100) nrec = (int)v; }
+            uint32_t before = OALog::diagLog().nextSeq;
+            for (int i = 0; i < nrec; i++) OALog::logDiag(1.0f + i * 0.01f, 20.0f, 15, 4.0f, 0, 900);
+            Serial.print(F("diagtest: wrote ")); Serial.print(nrec);
+            Serial.print(F(" -> diag seq ")); Serial.print(before);
+            Serial.print(F(" to ")); Serial.println(OALog::diagLog().nextSeq);
         }
         else if (line == "ble" || line.startsWith("ble ")) {
             uint32_t secs = 10;
