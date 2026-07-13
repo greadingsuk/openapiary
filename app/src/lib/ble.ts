@@ -122,8 +122,10 @@ export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 by
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
 export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 4 bytes: f32 scale factor LE (app-computed from a known-weight delta)
-export const OA_CHAR_HIST_CTRL = '0a000007-0a51-4000-b000-000000000001'; // 5 bytes: [0]=stream(0=weight,1=battery) + [1..4]=afterSeq u32 LE
+export const OA_CHAR_HIST_CTRL = '0a000007-0a51-4000-b000-000000000001'; // 5 bytes: [0]=stream(0=weight,1=battery,2=diag) + [1..4]=afterSeq u32 LE
 export const OA_CHAR_HIST_DATA = '0a000008-0a51-4000-b000-000000000001'; // notify: fixed records then a 1-byte 0x00 terminator
+export const OA_CHAR_INTERVAL  = '0a000009-0a51-4000-b000-000000000001'; // r/w 8 bytes: summerHb,summerRd,winterHb,winterRd u16 LE (seconds)
+export const OA_CHAR_DEBUG     = '0a00000a-0a51-4000-b000-000000000001'; // r/w 1 byte: test (diagnostic) logging enable
 
 export interface OADiagnostics {
   weightKg: number;
@@ -293,7 +295,7 @@ export interface DrainedHistory { weight: HistWeightRecord[]; battery: HistBatte
 
 async function collectStream<T>(
   deviceId: string,
-  stream: 0 | 1,
+  stream: number,
   afterSeq: number,
   minLen: number,
   parse: (dv: DataView) => T,
@@ -353,6 +355,84 @@ export async function drainHistoryConnected(
     }),
   );
   return { weight, battery };
+}
+
+// ---------------------------------------------------------------------------
+// Measurement-interval config + test (diagnostic) logging (firmware v1.1.0+).
+// ---------------------------------------------------------------------------
+
+export interface SeasonIntervals {
+  summerHeartbeatSec: number;
+  summerReadingSec: number;
+  winterHeartbeatSec: number;
+  winterReadingSec: number;
+}
+
+/** Read the scale's current per-season cadences on an open connection. */
+export async function readIntervalsConnected(deviceId: string): Promise<SeasonIntervals> {
+  const v = await withTimeout(
+    BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_INTERVAL),
+    8000, 'Read intervals',
+  );
+  const b = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  if (b.length < 8) throw new Error('Interval payload malformed.');
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  return {
+    summerHeartbeatSec: dv.getUint16(0, true),
+    summerReadingSec: dv.getUint16(2, true),
+    winterHeartbeatSec: dv.getUint16(4, true),
+    winterReadingSec: dv.getUint16(6, true),
+  };
+}
+
+/** Write per-season cadences (firmware clamps to its safe ranges). */
+export async function setIntervalsConnected(deviceId: string, iv: SeasonIntervals): Promise<void> {
+  const dv = new DataView(new ArrayBuffer(8));
+  dv.setUint16(0, Math.round(iv.summerHeartbeatSec), true);
+  dv.setUint16(2, Math.round(iv.summerReadingSec), true);
+  dv.setUint16(4, Math.round(iv.winterHeartbeatSec), true);
+  dv.setUint16(6, Math.round(iv.winterReadingSec), true);
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_INTERVAL, dv),
+    8000, 'Write intervals',
+  );
+}
+
+/** Read whether test (diagnostic) logging is currently enabled. */
+export async function readDebugConnected(deviceId: string): Promise<boolean> {
+  const v = await withTimeout(
+    BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_DEBUG),
+    8000, 'Read test-logging',
+  );
+  const b = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  return b.length >= 1 && b[0] !== 0;
+}
+
+/** Enable / disable test (diagnostic) logging on the scale. */
+export async function setDebugConnected(deviceId: string, on: boolean): Promise<void> {
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_DEBUG, oneByte(on ? 1 : 0)),
+    8000, 'Write test-logging',
+  );
+}
+
+export interface DiagRecord {
+  seq: number; epoch: number; weightKg: number; tempC: number; spreadG: number; batteryV: number;
+}
+
+/** Drain the diagnostic log (stream 2). afterSeq=0 pulls everything on-device. */
+export async function drainDiagnosticsConnected(deviceId: string, afterSeq = 0): Promise<DiagRecord[]> {
+  return collectStream<DiagRecord>(
+    deviceId, 2, afterSeq, 14,
+    (dv) => ({
+      seq: dv.getUint32(0, true),
+      epoch: dv.getUint32(4, true),
+      weightKg: dv.getInt16(8, true) / 100,
+      tempC: dv.getInt8(10) / 2,
+      spreadG: dv.getUint16(11, true),
+      batteryV: 2.5 + dv.getUint8(13) * 0.02,
+    }),
+  );
 }
 
 /**

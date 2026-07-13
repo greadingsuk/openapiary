@@ -75,7 +75,7 @@ static const float BAT_RECOVERY_THRESHOLD_V = 3.3f;    // modest hysteresis abov
 static const float BAT_DIVIDER_CAL = 0.7698f;
 
 // ---- Runtime state (loaded from /cal.txt at boot) ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 60, 900, 60, 3600, 0 };
 static uint32_t g_resetReason = 0;   // captured at boot, cleared from NRF_POWER->RESETREAS
 
 // Last full scale reading — the heartbeat advert re-broadcasts these between
@@ -219,6 +219,7 @@ void setup() {
 
     // 4. Load persisted cal/tare/packetId/bootCount/name/tz and bump bootCount.
     OAPersist::begin();
+    OAPersist::seedDefaults(g_state);
     OAPersist::load(g_state);
     g_state.bootCount++;
     OAPersist::save(g_state);   // always save on boot so we never lose the count
@@ -318,14 +319,26 @@ void loop() {
     uint32_t nowMs  = millis();
     uint32_t epoch  = OAConfig::currentEpoch();          // 0 if time still unknown
     bool     winter = isWinter(epoch);
-    uint32_t measIntervalMs  = winter ? WINTER_MEAS_MS : SUMMER_MEAS_MS;
-    uint16_t measIntervalSec = winter ? 3600 : 900;
+    // Per-season, user-configurable cadences (persisted). Winter (off-season)
+    // uses its own longer reading interval. Clamp defensively.
+    uint16_t hbSec = winter ? g_state.winterHeartbeatSec : g_state.summerHeartbeatSec;
+    uint16_t rdSec = winter ? g_state.winterReadingSec   : g_state.summerReadingSec;
+    if (hbSec < 10) hbSec = 10;
+    if (hbSec > 300) hbSec = 300;
+    if (rdSec < 60) rdSec = 60;
+    if (rdSec > 10800) rdSec = 10800;
+    uint32_t measIntervalMs  = (uint32_t)rdSec * 1000UL;
+    uint16_t measIntervalSec = rdSec;
+    uint32_t heartbeatMs     = (uint32_t)hbSec * 1000UL;
 
     // 1. FULL SCALE READ (HX711) on the measurement cadence. Between reads the
     //    loop is a heartbeat only (no HX711) — minimal power.
+    bool     measuredNow = false;
+    uint16_t measSpreadG = 0;
     bool measureDue = firstRun || (nowMs - lastMeasureMs) >= measIntervalMs;
     if (measureDue) {
         float w = hx711_read_median(10);
+        measSpreadG = hx711_last_spread_g();
         hx711_sleep();
         float t = readDieTempC();
         g_lastWeightKg = w;
@@ -334,6 +347,7 @@ void loop() {
         OALog::logWeight(w, t, epoch, measIntervalSec);  // -> flash ring buffer
         lastMeasureMs = nowMs;
         firstRun = false;
+        measuredNow = true;
     }
 
     // 2. Battery: fresh read every heartbeat (for the advert); logged hourly.
@@ -342,6 +356,12 @@ void loop() {
     if (lastBatteryMs == 0 || (nowMs - lastBatteryMs) >= BATTERY_LOG_MS) {
         OALog::logBattery(batteryV, epoch);
         lastBatteryMs = nowMs;
+    }
+
+    // 2b. Test-logging: when enabled, record a richer diagnostic sample each
+    //     measurement (weight + temp + sample spread + battery) to the diag ring.
+    if (g_state.debugLog && measuredNow) {
+        OALog::logDiag(g_lastWeightKg, g_lastTempC, measSpreadG, batteryV, epoch, measIntervalSec);
     }
 
     // 3. Persist the time anchor hourly so logs stay timestamped across a reboot.
@@ -423,7 +443,7 @@ void loop() {
     }
 
     // 6. Sleep until next heartbeat (FreeRTOS idle -> __WFE; see header comment).
-    delay(WAKE_MS);
+    delay(heartbeatMs);
 }
 
 float readBatteryVoltage() {

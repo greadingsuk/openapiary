@@ -13,6 +13,8 @@ import { loadSettings, saveSettings, type Settings } from '../lib/settings';
 import { syncNow, unsyncedCount } from '../lib/sync';
 import { useOnline } from '../lib/useOnline';
 import { useAuth, signOut, addCredentials } from '../lib/auth';
+import { APP_VERSION } from '../version';
+import { CURRENT_BUILD } from '../lib/ota';
 
 const SettingsPage: React.FC = () => {
   const online = useOnline();
@@ -147,6 +149,19 @@ const SettingsPage: React.FC = () => {
           {!online && <p className="oa-subtle text-xs mt-2">You're offline — readings will sync automatically when you reconnect.</p>}
           {syncMsg && <p className="oa-muted text-sm mt-2">{syncMsg}</p>}
         </div>
+
+        {/* About */}
+        <IonList inset>
+          <IonListHeader><IonLabel>About</IonLabel></IonListHeader>
+          <IonItem>
+            <IonLabel>App version</IonLabel>
+            <IonNote slot="end" className="oa-mono">{APP_VERSION}</IonNote>
+          </IonItem>
+          <IonItem>
+            <IonLabel>Firmware target</IonLabel>
+            <IonNote slot="end" className="oa-mono">{CURRENT_BUILD}</IonNote>
+          </IonItem>
+        </IonList>
 
         <IonAlert
           isOpen={showUpgrade}

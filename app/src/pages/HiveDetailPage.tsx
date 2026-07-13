@@ -4,7 +4,7 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline, scaleOutline, speedometerOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline, scaleOutline, speedometerOutline, optionsOutline, pulseOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
@@ -22,6 +22,8 @@ import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
 import TareWizard from '../components/TareWizard';
 import CalibrationWizard from '../components/CalibrationWizard';
+import IntervalsWizard from '../components/IntervalsWizard';
+import TestLoggingModal from '../components/TestLoggingModal';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
 type Range = '24h' | '7d' | '30d' | 'custom';
@@ -53,6 +55,8 @@ const HiveDetailPage: React.FC = () => {
   const [showMove, setShowMove] = useState(false);
   const [showTare, setShowTare] = useState(false);
   const [showCalibrate, setShowCalibrate] = useState(false);
+  const [showIntervals, setShowIntervals] = useState(false);
+  const [showTestLog, setShowTestLog] = useState(false);
   const [showNewApiary, setShowNewApiary] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
@@ -309,7 +313,9 @@ const HiveDetailPage: React.FC = () => {
           buttons={[
             { text: 'Tare (set to zero)', icon: scaleOutline, handler: () => setShowTare(true) },
             { text: 'Calibration & accuracy check', icon: speedometerOutline, handler: () => setShowCalibrate(true) },
+            { text: 'Measurement intervals', icon: optionsOutline, handler: () => setShowIntervals(true) },
             { text: 'Sync history from scale', icon: cloudDownloadOutline, handler: () => { void doSyncHistory(); } },
+            { text: 'Test logging (diagnostics)', icon: pulseOutline, handler: () => setShowTestLog(true) },
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
             { text: 'Firmware update', icon: hardwareChipOutline, handler: () => router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward') },
@@ -333,6 +339,8 @@ const HiveDetailPage: React.FC = () => {
         <TareWizard isOpen={showTare} deviceName={id.toUpperCase()} onClose={() => setShowTare(false)}
           onTared={() => { void load(); }} />
         <CalibrationWizard isOpen={showCalibrate} deviceName={id.toUpperCase()} onClose={() => setShowCalibrate(false)} />
+        <IntervalsWizard isOpen={showIntervals} deviceName={id.toUpperCase()} onClose={() => setShowIntervals(false)} />
+        <TestLoggingModal isOpen={showTestLog} deviceName={id.toUpperCase()} onClose={() => setShowTestLog(false)} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
         <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
           message="Number of days to show (1\u2013730)."

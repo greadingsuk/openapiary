@@ -28,7 +28,7 @@ static const uint8_t PIN_VBAT_EN   = 14;
 // Battery divider correction (see main.cpp). Nominal term over-reads ~1.30x.
 static const float BAT_DIVIDER_CAL = 0.7698f;
 
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 60, 900, 60, 3600, 0 };
 
 // Battery voltage with the fixed divider correction but WITHOUT the per-device
 // trim (used by `batcal` to compute a fresh trim from a multimeter reading).
@@ -146,6 +146,7 @@ void enterCalibrationMode() {
     Serial.println(F("commands: tare | cal <kg> | raw [n] | mon [int_s] [dur_s] | batcal <V> | show | save | ble [s] | reboot | exit"));
 
     OAPersist::begin();
+    OAPersist::seedDefaults(g_state);
     if (OAPersist::load(g_state)) {
         Serial.print(F("loaded cal=")); Serial.print(g_state.calFactor, 4);
         Serial.print(F(" tare="));      Serial.print(g_state.tareOffset);

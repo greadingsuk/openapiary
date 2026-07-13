@@ -51,6 +51,16 @@ static uint8_t UUID_HCTRL[16] = {
 static uint8_t UUID_HDATA[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x08,0x00,0x00,0x0a
 };
+// Measurement-interval config (0a...09, read/write 8 bytes):
+//   summerHeartbeatSec u16 LE, summerReadingSec u16 LE,
+//   winterHeartbeatSec u16 LE, winterReadingSec u16 LE
+static uint8_t UUID_INTERVAL[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x09,0x00,0x00,0x0a
+};
+// Test-logging enable (0a...0a, read/write 1 byte: 0=off, 1=on).
+static uint8_t UUID_DEBUG[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x0a,0x00,0x00,0x0a
+};
 
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
@@ -60,6 +70,8 @@ inline BLECharacteristic& sampleChar(){ static BLECharacteristic c(UUID_SAMPLE);
 inline BLECharacteristic& calibChar(){ static BLECharacteristic c(UUID_CALIB);   return c; }
 inline BLECharacteristic& histCtrlChar(){ static BLECharacteristic c(UUID_HCTRL); return c; }
 inline BLECharacteristic& histDataChar(){ static BLECharacteristic c(UUID_HDATA); return c; }
+inline BLECharacteristic& intervalChar(){ static BLECharacteristic c(UUID_INTERVAL); return c; }
+inline BLECharacteristic& debugChar()   { static BLECharacteristic c(UUID_DEBUG);    return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -147,14 +159,29 @@ inline void onTareWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*da
 inline void onSampleWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* /*data*/, uint16_t /*len*/) {
     uint8_t out[10] = {0};
 
-    float kg = hx711_read_median(10);
-    uint16_t spread = hx711_last_spread_g();
-    long raw = hx711_read_raw_average(1);
+    // Calibration precision: average 20 raw samples (not 1) and DON'T let a
+    // timeout serve a stale cached value. The calibration wizard derives the
+    // scale factor from the delta of two of these reads, so a single noisy or
+    // stale sample would corrupt the factor (this was the field 0.88 kg bug).
+    // Report status=1 on too few good samples so the app retries instead of
+    // calibrating off a bad number. weightKg and raw_counts are computed from
+    // the SAME averaged batch so they can't disagree.
+    hx711_invalidate_cache();
+    long mn = 0, mx = 0; uint8_t got = 0;
+    long raw = hx711_read_raw_stats(20, &mn, &mx, &got);
     hx711_sleep();
 
-    if (isnan(kg)) {
+    if (got < 5 || !g_state) {
         out[0] = 1;
     } else {
+        float cal = (g_state->calFactor != 0.0f) ? g_state->calFactor : 1.0f;
+        long net = raw - g_state->tareOffset;
+        float kg = (float)net / cal;
+        long spreadG = lroundf((mx - mn) / fabsf(cal) * 1000.0f);
+        if (spreadG < 0) spreadG = 0;
+        if (spreadG > 65535L) spreadG = 65535L;
+        uint16_t spread = (uint16_t)spreadG;
+
         long centi = lroundf(kg * 100.0f);
         if (centi < -32768L) centi = -32768L;
         if (centi >  32767L) centi =  32767L;
@@ -196,10 +223,50 @@ inline void onCalibrateWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t*
 // Records the request; pumpHistory() (called from the main session loop) streams it.
 inline void onHistCtrlWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
     if (len < 5) return;
-    g_histStream = data[0] ? 1 : 0;
+    g_histStream = (data[0] <= 2) ? data[0] : 0;   // 0=weight, 1=battery, 2=diagnostics
     g_histAfterSeq = (uint32_t)data[1] | ((uint32_t)data[2] << 8) |
                      ((uint32_t)data[3] << 16) | ((uint32_t)data[4] << 24);
     g_histPending = true;
+    (void)chr;
+}
+
+// --- Measurement-interval + test-logging config ---------------------------
+static inline uint16_t rd16le(const uint8_t* d) { return (uint16_t)d[0] | ((uint16_t)d[1] << 8); }
+static inline uint16_t clampU16(uint16_t v, uint16_t lo, uint16_t hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// Publish the current cadences into the readable interval characteristic.
+inline void seedIntervalChar() {
+    if (!g_state) return;
+    const uint16_t v[4] = { g_state->summerHeartbeatSec, g_state->summerReadingSec,
+                            g_state->winterHeartbeatSec, g_state->winterReadingSec };
+    uint8_t b[8];
+    for (int i = 0; i < 4; i++) { b[i*2] = (uint8_t)(v[i] & 0xFF); b[i*2+1] = (uint8_t)(v[i] >> 8); }
+    intervalChar().write(b, sizeof(b));
+}
+
+// Interval write: 8 bytes (see UUID_INTERVAL). Clamped to safe per-season ranges
+// and persisted immediately (survives a reboot, same as tare/cal).
+inline void onIntervalWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (!g_state || len < 8) return;
+    g_state->summerHeartbeatSec = clampU16(rd16le(data),     10, 300);
+    g_state->summerReadingSec   = clampU16(rd16le(data + 2), 60, 3600);
+    g_state->winterHeartbeatSec = clampU16(rd16le(data + 4), 10, 300);
+    g_state->winterReadingSec   = clampU16(rd16le(data + 6), 1800, 10800);
+    g_dirty = true;
+    OAPersist::save(*g_state);
+    seedIntervalChar();   // reflect clamped values back
+    (void)chr;
+}
+
+// Test-logging enable write: 1 byte (0/1). Persisted immediately.
+inline void onDebugWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    if (!g_state || len < 1) return;
+    g_state->debugLog = data[0] ? 1 : 0;
+    g_dirty = true;
+    OAPersist::save(*g_state);
+    debugChar().write(&g_state->debugLog, 1);
     (void)chr;
 }
 
@@ -249,8 +316,22 @@ inline void begin(OAPersist::State* state) {
 
     histDataChar().setProperties(CHR_PROPS_NOTIFY);
     histDataChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
-    histDataChar().setMaxLen(11);
+    histDataChar().setMaxLen(14);   // widest record = diagnostics (seq4+epoch4+payload6)
     histDataChar().begin();
+
+    intervalChar().setProperties(CHR_PROPS_READ | CHR_PROPS_WRITE);
+    intervalChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    intervalChar().setFixedLen(8);
+    intervalChar().setWriteCallback(onIntervalWrite);
+    intervalChar().begin();
+    seedIntervalChar();
+
+    debugChar().setProperties(CHR_PROPS_READ | CHR_PROPS_WRITE);
+    debugChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    debugChar().setFixedLen(1);
+    debugChar().setWriteCallback(onDebugWrite);
+    debugChar().begin();
+    debugChar().write(&g_state->debugLog, 1);
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.
@@ -284,12 +365,14 @@ inline void pumpHistory() {
     if (!Bluefruit.connected()) return;
 
     const uint8_t stream = g_histStream;
-    OALog::RingLog& log = (stream == 1) ? OALog::batteryLog() : OALog::weightLog();
+    OALog::RingLog& log = (stream == 1) ? OALog::batteryLog()
+                        : (stream == 2) ? OALog::diagLog()
+                                        : OALog::weightLog();
 
     uint32_t start = g_histAfterSeq + 1;
     if (start < log.oldestSeq()) start = log.oldestSeq();
 
-    uint8_t rec[3];
+    uint8_t rec[6];
     for (uint32_t seq = start; seq < log.nextSeq; seq++) {
         if (!log.readSeq(seq, rec)) continue;
         uint32_t epoch = log.epochOf(seq);
@@ -300,6 +383,15 @@ inline void pumpHistory() {
             out[4] = (uint8_t)epoch; out[5] = (uint8_t)(epoch >> 8);
             out[6] = (uint8_t)(epoch >> 16); out[7] = (uint8_t)(epoch >> 24);
             out[8] = rec[0];
+            if (!histNotify(out, sizeof(out))) return;
+        } else if (stream == 2) {
+            uint8_t out[14];
+            out[0] = (uint8_t)seq; out[1] = (uint8_t)(seq >> 8);
+            out[2] = (uint8_t)(seq >> 16); out[3] = (uint8_t)(seq >> 24);
+            out[4] = (uint8_t)epoch; out[5] = (uint8_t)(epoch >> 8);
+            out[6] = (uint8_t)(epoch >> 16); out[7] = (uint8_t)(epoch >> 24);
+            out[8] = rec[0]; out[9] = rec[1]; out[10] = rec[2];
+            out[11] = rec[3]; out[12] = rec[4]; out[13] = rec[5];
             if (!histNotify(out, sizeof(out))) return;
         } else {
             uint8_t out[11];

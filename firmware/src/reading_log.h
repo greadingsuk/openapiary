@@ -39,6 +39,12 @@ static const uint8_t  MAX_ANCHORS  = 8;
 // (~64 days @1 h). Metadata files are <100 B each.
 static const uint16_t WLOG_CAP = 5600;
 static const uint16_t BLOG_CAP = 1536;
+// Diagnostic ring for the opt-in test-logging mode: a richer record captured at
+// the (usually shortened) measurement cadence so a field drift can be reviewed
+// later. Small on purpose to stay within the InternalFS budget alongside the
+// weight/battery rings. 384 * 6 = 2.3 KB (~4 days at a 15-min cadence, far more
+// when a test uses a short interval).
+static const uint16_t DLOG_CAP = 384;
 
 struct Anchor {
     uint32_t seq;
@@ -245,10 +251,17 @@ inline RingLog& batteryLog() {
     static RingLog r("/oa_bl.bin", "/oa_bl.m", 1, BLOG_CAP);
     return r;
 }
+// Diagnostic log (test-logging mode). 6-byte record:
+//   weight_centi i16 LE, temp_half i8, spread_g u16 LE, batt u8
+inline RingLog& diagLog() {
+    static RingLog r("/oa_dl.bin", "/oa_dl.m", 6, DLOG_CAP);
+    return r;
+}
 
 inline void begin() {
     weightLog().begin();
     batteryLog().begin();
+    diagLog().begin();
 }
 
 // Append a full weight/temp measurement.
@@ -264,6 +277,23 @@ inline void logBattery(float volts, uint32_t epoch) {
     long b = lroundf((volts - 2.5f) * 50.0f);   // 0.02 V steps from 2.5 V
     uint8_t rec[1] = { (uint8_t)constrain(b, 0L, 255L) };
     batteryLog().append(rec, epoch, 3600);
+}
+
+// Append a diagnostic sample (test-logging mode only). Captures the same
+// weight/temp plus the sample spread (a stability/health signal) and battery so
+// a field drift can be reviewed. 6-byte record.
+inline void logDiag(float weightKg, float tempC, uint16_t spreadG, float battV,
+                    uint32_t epoch, uint16_t intervalSec) {
+    int16_t centi = (int16_t)constrain(lroundf(weightKg * 100.0f), -32768L, 32767L);
+    int8_t  th    = (int8_t)constrain(lroundf(tempC * 2.0f), -128L, 127L);
+    uint8_t bt    = (uint8_t)constrain(lroundf((battV - 2.5f) * 50.0f), 0L, 255L);
+    uint8_t rec[6] = {
+        (uint8_t)(centi & 0xFF), (uint8_t)((centi >> 8) & 0xFF),
+        (uint8_t)th,
+        (uint8_t)(spreadG & 0xFF), (uint8_t)((spreadG >> 8) & 0xFF),
+        bt,
+    };
+    diagLog().append(rec, epoch, intervalSec);
 }
 
 // --- Time anchor across reboots -------------------------------------------

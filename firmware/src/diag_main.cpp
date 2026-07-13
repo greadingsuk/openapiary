@@ -32,7 +32,7 @@ static const uint8_t PIN_HX711_SCK = D3;
 static const uint8_t PIN_VBAT_EN   = 14;
 
 // ---- Globals ----
-static OAPersist::State g_state = { -26913.0f, 0, 0, 0 };
+static OAPersist::State g_state = { -26913.0f, 0, 0, 0, "", 0, 1.0f, 60, 900, 60, 3600, 0 };
 static uint32_t  g_resetReason = 0;
 static char      g_devName[12] = "OA-????";
 static bool      g_advertising = true;

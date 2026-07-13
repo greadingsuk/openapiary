@@ -153,18 +153,18 @@ const CalibrationWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => 
               <h2 className="text-lg font-semibold" style={{ color: 'var(--oa-ink)' }}>Calibration &amp; accuracy check</h2>
               <p className="text-sm oa-muted">Have a known weight ready (e.g. a 1&nbsp;kg bag of sugar). Choose how the scale is set up:</p>
             </div>
-            <button className="oa-card p-4 flex items-start gap-3 text-left" onClick={() => { void start('empty'); }}>
-              <IonIcon icon={scaleOutline} style={{ fontSize: 24, color: 'var(--oa-honey-600)', marginTop: 2 }} />
-              <div className="flex flex-col">
-                <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>Empty scale (bench)</span>
-                <span className="text-xs oa-muted">Zero it, add the known weight — it should read exactly that.</span>
+            <button className="oa-card p-6 flex items-start gap-4 text-left active:opacity-80 transition-opacity" onClick={() => { void start('empty'); }}>
+              <IonIcon icon={scaleOutline} style={{ fontSize: 40, color: 'var(--oa-honey-600)', marginTop: 2, flexShrink: 0 }} />
+              <div className="flex flex-col gap-1">
+                <span className="text-lg font-semibold" style={{ color: 'var(--oa-ink)' }}>Empty scale</span>
+                <span className="text-sm oa-muted">An unloaded test. With nothing on the platform the scale is zeroed, then you place a known weight and it should read exactly that. Best done on the bench.</span>
               </div>
             </button>
-            <button className="oa-card p-4 flex items-start gap-3 text-left" onClick={() => { void start('hive'); }}>
-              <IonIcon icon={leafOutline} style={{ fontSize: 24, color: 'var(--oa-honey-600)', marginTop: 2 }} />
-              <div className="flex flex-col">
-                <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>Hive on scale (in field)</span>
-                <span className="text-xs oa-muted">Keeps the hive on; add the known weight on top to check accuracy.</span>
+            <button className="oa-card p-6 flex items-start gap-4 text-left active:opacity-80 transition-opacity" onClick={() => { void start('hive'); }}>
+              <IonIcon icon={leafOutline} style={{ fontSize: 40, color: 'var(--oa-honey-600)', marginTop: 2, flexShrink: 0 }} />
+              <div className="flex flex-col gap-1">
+                <span className="text-lg font-semibold" style={{ color: 'var(--oa-ink)' }}>Scale with Hive</span>
+                <span className="text-sm oa-muted">A loaded test. The hive stays on the scale; you add a known weight on top and it checks the measured increase against that weight — verifying accuracy without disturbing the colony.</span>
               </div>
             </button>
           </div>
