@@ -121,7 +121,7 @@ export const OA_CHAR_NAME      = '0a000001-0a51-4000-b000-000000000001'; // utf-
 export const OA_CHAR_TIME      = '0a000002-0a51-4000-b000-000000000001'; // 8 bytes: u32 epoch LE + i16 tzOffsetMin LE
 export const OA_CHAR_TARE      = '0a000003-0a51-4000-b000-000000000001'; // write any byte -> tare now
 export const OA_CHAR_SAMPLE    = '0a000004-0a51-4000-b000-000000000001'; // write to refresh, read diagnostics payload
-export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 2 bytes: u16 known weight grams LE -> recompute factor
+export const OA_CHAR_CALIB     = '0a000006-0a51-4000-b000-000000000001'; // 4 bytes: f32 scale factor LE (app-computed from a known-weight delta)
 export const OA_CHAR_HIST_CTRL = '0a000007-0a51-4000-b000-000000000001'; // 5 bytes: [0]=stream(0=weight,1=battery) + [1..4]=afterSeq u32 LE
 export const OA_CHAR_HIST_DATA = '0a000008-0a51-4000-b000-000000000001'; // notify: fixed records then a 1-byte 0x00 terminator
 
