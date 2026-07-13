@@ -4,7 +4,7 @@ import {
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
-import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline } from 'ionicons/icons';
+import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline, scaleOutline, speedometerOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
@@ -20,6 +20,8 @@ import { syncDeviceHistory } from '../lib/history';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
+import TareWizard from '../components/TareWizard';
+import CalibrationWizard from '../components/CalibrationWizard';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
 type Range = '24h' | '7d' | '30d' | 'custom';
@@ -49,6 +51,8 @@ const HiveDetailPage: React.FC = () => {
   const [showRename, setShowRename] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMove, setShowMove] = useState(false);
+  const [showTare, setShowTare] = useState(false);
+  const [showCalibrate, setShowCalibrate] = useState(false);
   const [showNewApiary, setShowNewApiary] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
@@ -303,6 +307,8 @@ const HiveDetailPage: React.FC = () => {
 
         <IonActionSheet isOpen={showMenu} onDidDismiss={() => setShowMenu(false)} header={name}
           buttons={[
+            { text: 'Tare (set to zero)', icon: scaleOutline, handler: () => setShowTare(true) },
+            { text: 'Calibration & accuracy check', icon: speedometerOutline, handler: () => setShowCalibrate(true) },
             { text: 'Sync history from scale', icon: cloudDownloadOutline, handler: () => { void doSyncHistory(); } },
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
@@ -324,6 +330,9 @@ const HiveDetailPage: React.FC = () => {
           message="Up to 16 characters. Updates here, in the cloud, and on the scale if in range."
           inputs={[{ name: 'name', type: 'text', value: name, attributes: { maxlength: 16 } }]}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Save', handler: (d) => { void doRename(d.name); } }]} />
+        <TareWizard isOpen={showTare} deviceName={id.toUpperCase()} onClose={() => setShowTare(false)}
+          onTared={() => { void load(); }} />
+        <CalibrationWizard isOpen={showCalibrate} deviceName={id.toUpperCase()} onClose={() => setShowCalibrate(false)} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
         <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
           message="Number of days to show (1\u2013730)."

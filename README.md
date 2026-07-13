@@ -30,6 +30,9 @@ Short version:
 2. **App** — `cd app && npm install && npm run dev` for local dev, or `npm run build` to produce a release build.
 3. **Cloud** *(optional for local-only use)* — `cd cloud/api && npm install`, run D1 migrations, then deploy via Wrangler.
 
+For full build & deploy steps (iOS app, Worker API, admin dashboard, user site)
+see [`docs/deploy.md`](docs/deploy.md). Firmware OTA releases: [`docs/firmware-ota.md`](docs/firmware-ota.md).
+
 ## Status
 
 - Firmware (v1.0.9): 1-min heartbeat advert + on-device reading log (15-min / hourly) drained over BLE; pairing-window GATT config (rename / time / tare / calibrate / diagnostics); tare & calibration persist to flash immediately.
