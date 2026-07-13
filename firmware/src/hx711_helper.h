@@ -133,6 +133,33 @@ inline long hx711_read_raw_average(uint8_t samples) {
     return avg;
 }
 
+// Bench-diagnostic raw read: wakes the chip, takes `samples` raw counts and
+// reports the average plus min/max so the caller can see per-sample scatter
+// (noise). `outGot` receives the number of successful reads (0 = chip never
+// responded). Leaves the chip powered up. Does NOT touch the g_lastRawAvg cache
+// so a diagnostic sweep can't be masked by a stale value.
+inline long hx711_read_raw_stats(uint8_t samples, long* outMin, long* outMax, uint8_t* outGot) {
+    if (samples == 0) samples = 10;
+    pinMode(g_sck_pin, OUTPUT);
+    pinMode(g_dt_pin, INPUT);
+    digitalWrite(g_sck_pin, LOW);  // wake
+    delay(400);
+    long sum = 0, mn = LONG_MAX, mx = LONG_MIN;
+    uint8_t got = 0;
+    for (uint8_t i = 0; i < samples; i++) {
+        long v = hx711_raw_read_timeout(500);
+        if (v == LONG_MIN) continue;
+        sum += v; got++;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+    }
+    if (outGot) *outGot = got;
+    if (got == 0) { if (outMin) *outMin = 0; if (outMax) *outMax = 0; return 0; }
+    if (outMin) *outMin = mn;
+    if (outMax) *outMax = mx;
+    return sum / got;
+}
+
 inline void  hx711_set_scale(float f)   { g_hx.set_scale(f); }
 inline void  hx711_set_offset(int32_t o){ g_hx.set_offset(o); }
 inline float hx711_get_scale()          { return g_hx.get_scale(); }

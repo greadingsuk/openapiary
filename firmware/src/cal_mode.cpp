@@ -4,6 +4,8 @@
 // CLI (115200 baud, line-based):
 //   tare              -> store current raw reading as zero offset
 //   cal <known_kg>    -> compute and store new scale factor using the weight on the platform
+//   raw [n]           -> average of n raw samples (default 10) with min/max/spread — noise check
+//   mon [int_s] [dur_s] -> stream raw/net/kg/temp/spread/batt as CSV (default 5s x 300s) — drift trace
 //   show              -> dump stored cal/tare/packetId + live raw reading
 //   save              -> persist current values to /cal.txt (auto-runs after tare/cal)
 //   ble [seconds]     -> one BTHome v2 advert burst (default 10s) using current cal/tare
@@ -141,7 +143,7 @@ void enterCalibrationMode() {
 
     Serial.println();
     Serial.println(F("=== OpenApiary calibration mode ==="));
-    Serial.println(F("commands: tare | cal <kg> | batcal <V> | show | save | ble [s] | reboot | exit"));
+    Serial.println(F("commands: tare | cal <kg> | raw [n] | mon [int_s] [dur_s] | batcal <V> | show | save | ble [s] | reboot | exit"));
 
     OAPersist::begin();
     if (OAPersist::load(g_state)) {
@@ -202,6 +204,73 @@ void enterCalibrationMode() {
             Serial.print(F("raw=")); Serial.print(raw);
             Serial.print(F(" net=")); Serial.print(raw - g_state.tareOffset);
             Serial.print(F(" kg="));  Serial.println((raw - g_state.tareOffset) / g_state.calFactor, 3);
+        }
+        else if (line == "raw" || line.startsWith("raw ")) {
+            uint8_t n = 10;
+            if (line.length() > 4) { long v = line.substring(4).toInt(); if (v > 0 && v <= 100) n = (uint8_t)v; }
+            long mn = 0, mx = 0; uint8_t got = 0;
+            long avg = hx711_read_raw_stats(n, &mn, &mx, &got);
+            hx711_sleep();
+            long net = avg - g_state.tareOffset;
+            long spread = (got > 0) ? (mx - mn) : 0;
+            float spreadG = spread / fabsf(g_state.calFactor) * 1000.0f;
+            Serial.print(F("raw avg=")); Serial.print(avg);
+            Serial.print(F(" min=")); Serial.print(mn);
+            Serial.print(F(" max=")); Serial.print(mx);
+            Serial.print(F(" spread=")); Serial.print(spread);
+            Serial.print(F(" (")); Serial.print(spreadG, 1); Serial.print(F("g)"));
+            Serial.print(F(" net=")); Serial.print(net);
+            Serial.print(F(" kg=")); Serial.print((float)net / g_state.calFactor, 3);
+            Serial.print(F(" got=")); Serial.print(got); Serial.print('/'); Serial.println(n);
+        }
+        else if (line == "mon" || line.startsWith("mon ")) {
+            uint32_t interval = 5, duration = 300;
+            String rest = line.substring(3); rest.trim();
+            if (rest.length()) {
+                int sp = rest.indexOf(' ');
+                if (sp < 0) { long a = rest.toInt(); if (a > 0) interval = (uint32_t)a; }
+                else {
+                    long a = rest.substring(0, sp).toInt();
+                    long b = rest.substring(sp + 1).toInt();
+                    if (a > 0) interval = (uint32_t)a;
+                    if (b > 0) duration = (uint32_t)b;
+                }
+            }
+            if (interval < 1) interval = 1;
+            if (interval > 60) interval = 60;
+            if (duration < 1) duration = 1;
+            if (duration > 7200) duration = 7200;
+            Serial.print(F("mon: every ")); Serial.print(interval);
+            Serial.print(F("s for ")); Serial.print(duration);
+            Serial.println(F("s (send any line to stop)"));
+            Serial.println(F("t_s,raw,net,kg,tempC,spread_g,battV"));
+            uint32_t start = millis();
+            uint32_t next = start;
+            while ((millis() - start) < duration * 1000UL) {
+                if (Serial.available()) { while (Serial.available()) Serial.read(); Serial.println(F("mon stopped")); break; }
+                long mn = 0, mx = 0; uint8_t got = 0;
+                long avg = hx711_read_raw_stats(20, &mn, &mx, &got);
+                hx711_sleep();
+                long net = avg - g_state.tareOffset;
+                float kg = (float)net / g_state.calFactor;
+                float spreadG = (got > 0) ? ((mx - mn) / fabsf(g_state.calFactor) * 1000.0f) : 0.0f;
+                float t = readDieTempCcal(); if (isnan(t)) t = 0.0f;
+                float v = readBatteryVoltageCal();
+                uint32_t ts = (millis() - start) / 1000UL;
+                Serial.print(ts); Serial.print(',');
+                Serial.print(avg); Serial.print(',');
+                Serial.print(net); Serial.print(',');
+                Serial.print(kg, 3); Serial.print(',');
+                Serial.print(t, 1); Serial.print(',');
+                Serial.print(spreadG, 1); Serial.print(',');
+                Serial.println(v, 3);
+                next += interval * 1000UL;
+                while ((int32_t)(next - millis()) > 0) {
+                    if (Serial.available()) break;
+                    delay(20);
+                }
+            }
+            Serial.println(F("mon done"));
         }
         else if (line == "save") {
             OAPersist::save(g_state);
