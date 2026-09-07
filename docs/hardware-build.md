@@ -11,7 +11,7 @@
 | Seeed XIAO nRF52840 (Standard) | 1 | **NOT** the Sense variant \u2014 IMU not needed, and it's cheaper |
 | HX711 load-cell amplifier breakout | 1 | Any cheap green/red board is fine |
 | 50 kg half-bridge load cells | 4 | Wired into a full Wheatstone bridge \u2014 see [hardware-wiring.md](hardware-wiring.md) |
-| HXT (or equivalent) combinator board | 1 | Bathroom-scale wiring pattern; ~1 \u03a9 across E+/E\u2212, ~2 \u03a9 across A+/A\u2212 |
+| HXT (or equivalent) combinator board | 1 | Bathroom-scale wiring pattern; ~2 k\u03a9 across E+/E\u2212 and the same across A+/A\u2212 |
 | 3.7 V 1000 mAh LiPo, JST-PH 1.25 mm | 1 | Must match the XIAO's onboard connector |
 | 1 W 5 V solar panel | 1 | Feeds XIAO's USB-C through a Schottky diode |
 | A3144 Hall sensor (optional) | 1 | For magnet-triggered calibration mode \u2014 deferred to v1.1 |

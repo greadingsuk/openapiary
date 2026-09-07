@@ -166,22 +166,31 @@ separate battery disconnect in series.
 
 For each cell, with a multimeter on resistance mode:
 
-- `R–B` (red to black) ≈ **2 Ω** (sometimes 1 kΩ on higher-rated cells; 50 kg cheap cells are ~1–2 Ω)
-- `R–Y` (red to yellow) ≈ **half of R–B** — i.e. ~1 Ω
-- `Y–B` (yellow to black) ≈ **half of R–B** — i.e. ~1 Ω
+- `R–B` (red to black) ≈ **2 kΩ** — the two strain gauges in series
+- `R–Y` (red to yellow) ≈ **half of R–B** — i.e. ~1 kΩ
+- `Y–B` (yellow to black) ≈ **half of R–B** — i.e. ~1 kΩ
 
 Both halves must be equal within a few percent. If one half is much higher,
 the cell is damaged.
 
+> Foil strain gauges are 120 / 350 / 1000 Ω devices — there is no such thing as a
+> 1–2 Ω load cell. If your meter shows single digits, check whether it is
+> displaying kΩ. A genuine 2 Ω bridge at 3.3 V would draw ~1.6 A; the HX711
+> sources ~10 mA and would brown out instantly.
+
 ### 2. After combinator wiring (still no power)
 
-Probe at the HXT pads:
+Probe at the HXT pads. The four cells form a ring of eight gauges with the four
+YELLOW centre-taps as the bridge nodes, so for an arm resistance `r`:
 
-- `E+` to `E-` should read **~1 Ω** (two cells in series, in parallel with two more in series → R/2 + R/2 in parallel with R/2 + R/2 = R/2; with R ≈ 2 Ω → 1 Ω).
-- `A+` to `A-` should read **~2 Ω** (the signal diagonal, slightly different topology).
+- `E+` to `E-` ≈ **2r** (two paths of 4r in parallel) — expect ~**2 kΩ**
+- `A+` to `A-` ≈ **2r** as well — the two diagonals are **equal**, not different
+- any **adjacent** pair (e.g. `A+` to `E+`) ≈ **1.5r**, i.e. **0.75 ×** the `E+`/`E-` value
 
-These match the values measured on the personal hive scale build, so good
-enough as a known-good reference.
+All four adjacent-pair readings should agree within a few percent. One that is
+consistently out of line points at a bad joint or crimp in that arm rather than
+a faulty cell. Measure **unpowered** — an energised circuit corrupts a resistance
+reading, because the meter infers resistance from an injected test current.
 
 ### 3. After powering up, before calibrating
 

@@ -160,6 +160,47 @@ inline long hx711_read_raw_stats(uint8_t samples, long* outMin, long* outMax, ui
     return sum / got;
 }
 
+// Bench diagnostic: capture the INDIVIDUAL raw counts of a burst so the caller can
+// export them and compare estimators (median / trimmed mean / mean) offline without
+// reflashing. `useLibraryRead` selects bogde's read — the unprotected path that
+// hx711_read_median() (and therefore production) actually takes — instead of the
+// timeout-and-critical-section-guarded one, so the two can be compared directly.
+// `outElapsedMs` receives the duration of the sampling loop only (excluding the wake
+// settle), which reveals the RATE-pin strapping: ~100 ms/sample = 10 SPS, ~12.5 = 80 SPS.
+// `out` must hold at least `samples` entries. Returns the number of valid samples.
+inline uint8_t hx711_read_raw_samples(long* out, uint8_t samples, bool useLibraryRead,
+                                      uint32_t* outElapsedMs) {
+    if (samples == 0) samples = 10;
+    pinMode(g_sck_pin, OUTPUT);
+    pinMode(g_dt_pin, INPUT);
+    digitalWrite(g_sck_pin, LOW);  // wake
+    delay(400);
+    uint8_t got = 0;
+    uint32_t t0 = millis();
+    for (uint8_t i = 0; i < samples; i++) {
+        long v;
+        if (useLibraryRead) {
+            // Pre-gate so a powered-down chip can't spin forever inside wait_ready().
+            if (!g_hx.wait_ready_timeout(500)) continue;
+            v = g_hx.read();
+        } else {
+            v = hx711_raw_read_timeout(500);
+            if (v == LONG_MIN) continue;
+        }
+        out[got++] = v;
+    }
+    if (outElapsedMs) *outElapsedMs = millis() - t0;
+    return got;
+}
+
+// Hold the HX711 powered so excitation voltage can be measured at E+/E- with a
+// multimeter. Between reads the firmware parks the chip in power-down, which
+// collapses AVDD — probing then reads ~0 V and looks like a dead bridge.
+inline void hx711_hold_awake() {
+    pinMode(g_sck_pin, OUTPUT);
+    digitalWrite(g_sck_pin, LOW);
+}
+
 inline void  hx711_set_scale(float f)   { g_hx.set_scale(f); }
 inline void  hx711_set_offset(int32_t o){ g_hx.set_offset(o); }
 inline float hx711_get_scale()          { return g_hx.get_scale(); }
