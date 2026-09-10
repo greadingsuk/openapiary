@@ -251,8 +251,8 @@ inline RingLog& batteryLog() {
     static RingLog r("/oa_bl.bin", "/oa_bl.m", 1, BLOG_CAP);
     return r;
 }
-// Diagnostic log (test-logging mode). 6-byte record:
-//   weight_centi i16 LE, temp_half i8, spread_g u16 LE, batt u8
+// Diagnostic log (soak-test mode). 6-byte record:
+//   weight_grams i16 LE, temp_half i8, spread_g u16 LE, batt u8
 inline RingLog& diagLog() {
     static RingLog r("/oa_dl.bin", "/oa_dl.m", 6, DLOG_CAP);
     return r;
@@ -284,11 +284,11 @@ inline void logBattery(float volts, uint32_t epoch) {
 // a field drift can be reviewed. 6-byte record.
 inline void logDiag(float weightKg, float tempC, uint16_t spreadG, float battV,
                     uint32_t epoch, uint16_t intervalSec) {
-    int16_t centi = (int16_t)constrain(lroundf(weightKg * 100.0f), -32768L, 32767L);
+    int16_t grams = (int16_t)constrain(lroundf(weightKg * 1000.0f), -32768L, 32767L);
     int8_t  th    = (int8_t)constrain(lroundf(tempC * 2.0f), -128L, 127L);
     uint8_t bt    = (uint8_t)constrain(lroundf((battV - 2.5f) * 50.0f), 0L, 255L);
     uint8_t rec[6] = {
-        (uint8_t)(centi & 0xFF), (uint8_t)((centi >> 8) & 0xFF),
+        (uint8_t)(grams & 0xFF), (uint8_t)((grams >> 8) & 0xFF),
         (uint8_t)th,
         (uint8_t)(spreadG & 0xFF), (uint8_t)((spreadG >> 8) & 0xFF),
         bt,

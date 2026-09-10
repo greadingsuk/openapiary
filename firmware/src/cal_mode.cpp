@@ -21,6 +21,9 @@
 //                        mon/monprod/dump can be captured under identical radio load
 //   monble [int_s] [dur_s] -> like mon but with the BLE radio ACTIVELY advertising/connected,
 //                          + conn/got columns — tests SoftDevice interference with the HX711 read
+//   logdump           -> export stored production weight history as CSV over serial
+//   soak on|off       -> enable or disable 1 g internal soak logging
+//   soakdump          -> export the 1 g soak history as CSV over serial
 //   show              -> dump stored cal/tare/packetId + live raw reading
 //   save              -> persist current values to /cal.txt (auto-runs after tare/cal)
 //   ble [seconds]     -> one BTHome v2 advert burst (default 10s) using current cal/tare
@@ -164,7 +167,8 @@ static void setLoadAdvertising(bool on) {
 
 // Shared parser for the "[int_s] [dur_s]" tail of the streaming commands.
 static void parseMonArgs(const String& line, uint8_t skipChars,
-                         uint32_t* interval, uint32_t* duration, uint32_t maxDuration) {
+                         uint32_t* interval, uint32_t* duration,
+                         uint32_t maxInterval, uint32_t maxDuration) {
     String rest = line.length() > skipChars ? line.substring(skipChars) : String("");
     rest.trim();
     if (rest.length()) {
@@ -178,7 +182,7 @@ static void parseMonArgs(const String& line, uint8_t skipChars,
         }
     }
     if (*interval < 1) *interval = 1;
-    if (*interval > 60) *interval = 60;
+    if (*interval > maxInterval) *interval = maxInterval;
     if (*duration < 1) *duration = 1;
     if (*duration > maxDuration) *duration = maxDuration;
 }
@@ -266,7 +270,7 @@ void enterCalibrationMode() {
 
     Serial.println();
     Serial.println(F("=== OpenApiary calibration mode ==="));
-    Serial.println(F("commands: tare | cal <kg> | raw [n] | dump [n] [prod] | awake [s] | mon [int_s] [dur_s] | monprod [int_s] [dur_s] | monble [int_s] [dur_s] | radio on|off | cfg | logs | diagtest [n] | batcal <V> | show | save | ble [s] | reboot | exit"));
+    Serial.println(F("commands: tare | cal <kg> | raw [n] | dump [n] [prod] | awake [s] | mon [int_s] [dur_s] | monprod [int_s] [dur_s] | monble [int_s] [dur_s] | radio on|off | cfg | logs | logdump | soak on|off | soakdump | diagtest [n] | batcal <V> | show | save | ble [s] | reboot | exit"));
 
     OAPersist::begin();
     OAPersist::seedDefaults(g_state);
@@ -519,7 +523,7 @@ void enterCalibrationMode() {
             // the hardened raw path used by `mon`. Pair the two captures to show
             // whether the shipped read path is the source of the instability.
             uint32_t interval = 5, duration = 300;
-            parseMonArgs(line, 7, &interval, &duration, 7200);
+            parseMonArgs(line, 7, &interval, &duration, 300, 7200);
             Serial.print(F("monprod: production estimator, every ")); Serial.print(interval);
             Serial.print(F("s for ")); Serial.print(duration);
             Serial.println(F("s (send any line to stop)"));
@@ -611,6 +615,49 @@ void enterCalibrationMode() {
             Serial.print(F("diag    seq=")); Serial.print(OALog::diagLog().nextSeq);
             Serial.print(F(" oldest=")); Serial.print(OALog::diagLog().oldestSeq());
             Serial.print(F(" cap=")); Serial.println(OALog::diagLog().capacity);
+        }
+        else if (line == "logdump") {
+            OALog::begin();
+            OALog::RingLog& log = OALog::weightLog();
+            Serial.println(F("seq,epoch,kg,tempC"));
+            for (uint32_t seq = log.oldestSeq(); seq < log.nextSeq; seq++) {
+                uint8_t record[3];
+                if (!log.readSeq(seq, record)) continue;
+                int16_t centiKg = (int16_t)((uint16_t)record[0] | ((uint16_t)record[1] << 8));
+                int8_t halfC = (int8_t)record[2];
+                Serial.print(seq); Serial.print(',');
+                Serial.print(log.epochOf(seq)); Serial.print(',');
+                Serial.print(centiKg / 100.0f, 2); Serial.print(',');
+                Serial.println(halfC / 2.0f, 1);
+            }
+            Serial.println(F("logdump done"));
+        }
+        else if (line == "soak on" || line == "soak off") {
+            g_state.debugLog = line.endsWith("on") ? 1 : 0;
+            OAPersist::save(g_state);
+            Serial.print(F("soak logging "));
+            Serial.println(g_state.debugLog ? F("ON (1 g records at production cadence)") : F("OFF"));
+        }
+        else if (line == "soakdump") {
+            OALog::begin();
+            OALog::RingLog& log = OALog::diagLog();
+            Serial.println(F("seq,epoch,grams,kg,tempC,spread_g,battV"));
+            for (uint32_t seq = log.oldestSeq(); seq < log.nextSeq; seq++) {
+                uint8_t record[6];
+                if (!log.readSeq(seq, record)) continue;
+                int16_t grams = (int16_t)((uint16_t)record[0] | ((uint16_t)record[1] << 8));
+                int8_t halfC = (int8_t)record[2];
+                uint16_t spreadG = (uint16_t)record[3] | ((uint16_t)record[4] << 8);
+                float battV = 2.5f + record[5] / 50.0f;
+                Serial.print(seq); Serial.print(',');
+                Serial.print(log.epochOf(seq)); Serial.print(',');
+                Serial.print(grams); Serial.print(',');
+                Serial.print(grams / 1000.0f, 3); Serial.print(',');
+                Serial.print(halfC / 2.0f, 1); Serial.print(',');
+                Serial.print(spreadG); Serial.print(',');
+                Serial.println(battV, 2);
+            }
+            Serial.println(F("soakdump done"));
         }
         else if (line == "diagtest" || line.startsWith("diagtest ")) {
             OALog::begin();

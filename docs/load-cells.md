@@ -8,7 +8,7 @@ set of four is good** before it goes on a hive.
 
 ---
 
-## 0. Status — as of 2026-09-07
+## 0. Status — as of 2026-09-10
 
 ### Where the test harness stands
 
@@ -40,6 +40,29 @@ In order of impact:
    diagonal, two cells mounted inverted, a floating foot on the main rig.
 
 **Every fault was mechanical or a joint. None were firmware, the MCU or the ADC.**
+
+### Latest acceptance run — 2026-09-10
+
+The rebuilt bench rig was recalibrated with the 1 kg reference weight and tested under
+a static dumbbell load. The dumbbell was verified as 6.5 kg nominally; with the 1 kg
+reference weight also on the platform, the expected total was approximately 7.5 kg.
+
+| Measurement | Result | Verdict |
+|---|---:|---|
+| 1 kg reference check | 1.005 kg | pass |
+| Loaded platform, initial | 7.510 kg | pass |
+| Loaded platform, final recorded | 7.514 kg | pass |
+| 117-minute segment mean | 7.494 kg | pass |
+| Total range over segment | 45 g | gradual settling only |
+| Per-reading spread | 2–9 g | excellent |
+| Temperature | 21.0–21.8 C | stable |
+| State classification | all `steady` | pass |
+
+The run was sampled every three minutes using the production estimator. The laptop
+later went to sleep, but the firmware completed the recorded segment and reported
+`monprod done`. The final result supports returning this device to normal production
+firmware operation. The 45 g total change is slow thermal/mechanical settling, not
+measurement noise; no sample exceeded the 30 g settled-reading investigation limit.
 
 ### Next actions
 

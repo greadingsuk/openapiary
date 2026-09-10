@@ -181,18 +181,6 @@ void setup() {
     g_resetReason = NRF_POWER->RESETREAS;
     NRF_POWER->RESETREAS = 0xFFFFFFFF;
 
-    // ---- BOOT GATE: Battery voltage check ----
-    // If BAT voltage is below threshold, enter dormancy and allow solar to charge.
-    // This handles both "switch OFF" (BAT isolated) and "battery flat" scenarios.
-    float vbat_init = readBatteryVoltageEarly();
-    if (vbat_init < BAT_SHUTDOWN_THRESHOLD_V) {
-        // Battery is too low. Stay dormant and let solar charge it.
-        // Periodic checks every 30 sec; once it reaches RECOVERY_THRESHOLD, 
-        // a power cycle or watchdog reset will retry boot.
-        enterBatteryDormancy();
-        // (if enterBatteryDormancy returns, battery has recovered; continue below)
-    }
-
     // 1. VBUS reads high for BOTH a real USB host (bench calibration) AND for
     //    solar/charger power in the field. Only a USB *host* enumerates the
     //    device, so wait briefly for a USB mount:
@@ -201,13 +189,26 @@ void setup() {
     //    Without this gate a daylight reboot (e.g. to start an OTA update) would
     //    get stuck in cal mode forever, because enterCalibrationMode() blocks in
     //    its serial-CLI loop and never opens the pairing window.
-    if (vbusPresent()) {
+    bool externalVbus = vbusPresent();
+    if (externalVbus) {
         uint32_t t0 = millis();
         while (!TinyUSBDevice.mounted() && (millis() - t0) < 2500) delay(50);
         if (TinyUSBDevice.mounted()) {
             enterCalibrationMode();   // never returns
         }
         // else: solar / dumb-charger power — continue to normal setup below.
+    }
+
+    // A bare board has no voltage at BAT. A USB host has already entered the
+    // calibration CLI above, while a charger, power bank, or solar supply can
+    // safely power this test rig through VBUS.
+    float vbat_init = readBatteryVoltageEarly();
+    if (!externalVbus && vbat_init < BAT_SHUTDOWN_THRESHOLD_V) {
+        // Battery is too low. Stay dormant and let solar charge the battery.
+        // Periodic checks every 30 sec; once it reaches RECOVERY_THRESHOLD,
+        // a power cycle or watchdog reset will retry boot.
+        enterBatteryDormancy();
+        // (if enterBatteryDormancy returns, battery has recovered; continue below)
     }
 
     // 2. SoftDevice + BLE
