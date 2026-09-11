@@ -187,7 +187,13 @@ const HiveDetailPage: React.FC = () => {
   // configurable (10s-300s), so rather than assume any fixed total wait is
   // enough, we check in with the user between rounds.
   async function doSyncHistory() {
-    if (historySyncingRef.current) return;
+    if (historySyncingRef.current) {
+      // A background auto-drain (from page-open/refresh) is already running —
+      // without this the menu tap silently did nothing, which looked like a
+      // no-op bug. Point the user at the banner that's already showing.
+      setToast('Already syncing with the scale — see the banner above.');
+      return;
+    }
     historySyncingRef.current = true;
     setHistorySyncing(true);
     setSyncPhase(null);
@@ -419,7 +425,7 @@ const HiveDetailPage: React.FC = () => {
         <CalibrationWizard isOpen={showCalibrate} deviceName={id.toUpperCase()} onClose={() => setShowCalibrate(false)} />
         <IntervalsWizard isOpen={showIntervals} deviceName={id.toUpperCase()} onClose={() => setShowIntervals(false)} />
         <TestLoggingModal isOpen={showTestLog} deviceName={id.toUpperCase()} onClose={() => setShowTestLog(false)} />
-        <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
+        <IonToast isOpen={!!toast} message={toast ?? ''} duration={5000} onDidDismiss={() => setToast(null)} />
         <IonAlert
           isOpen={!!continuePrompt}
           header="Still waiting"

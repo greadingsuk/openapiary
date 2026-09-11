@@ -1,6 +1,6 @@
 import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
-  IonBackButton, IonButtons, IonButton, IonIcon,
+  IonBackButton, IonButtons, IonButton, IonIcon, IonAlert,
 } from '@ionic/react';
 import { bluetoothOutline, checkmarkCircle, stopCircleOutline } from 'ionicons/icons';
 import { useEffect, useState } from 'react';
@@ -8,6 +8,7 @@ import { useIonRouter } from '@ionic/react';
 import { startScan, stopScan, ensureBleReady, type OAAdvert } from '../lib/ble';
 import { upsertHive, insertReading } from '../lib/db';
 import { syncNow } from '../lib/sync';
+import { renameHive } from '../lib/deviceActions';
 import { loadSettings } from '../lib/settings';
 import { startBackgroundScan, stopBackgroundScan } from '../lib/backgroundScan';
 import { ErrorState } from '../components/ui';
@@ -20,6 +21,8 @@ const AddHivePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const [pairing, setPairing] = useState<OAAdvert | null>(null);
 
   async function toggleScan() {
     if (scanning) {
@@ -75,13 +78,27 @@ const AddHivePage: React.FC = () => {
 
   useEffect(() => () => { void stopScan(); void stopBackgroundScan(); }, []);
 
-  async function pair(a: OAAdvert) {
+  function pair(a: OAAdvert) {
+    // Ask for a friendly name before finishing — the device's technical id
+    // (e.g. "OA-ABCB") isn't meaningful to a beekeeper day-to-day.
+    setPairing(a);
+  }
+
+  async function confirmPair(name: string) {
+    const a = pairing;
+    if (!a) return;
+    setPairing(null);
     try {
       const hiveId = a.deviceName.toLowerCase();
+      const trimmed = (name ?? '').trim();
+      if (trimmed) {
+        await renameHive(hiveId, a.deviceName, trimmed);
+      }
       // Already cached locally on every advert; just kick a sync.
       const r = await syncNow();
       if (r.failed.length) throw new Error(r.failed.join('; '));
       setSavedId(hiveId);
+      setSavedName(trimmed || a.deviceName);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -144,7 +161,7 @@ const AddHivePage: React.FC = () => {
             <div className="oa-card p-4 flex flex-col gap-3" style={{ borderColor: 'var(--ion-color-success)' }}>
               <div className="flex items-center gap-2">
                 <IonIcon icon={checkmarkCircle} style={{ color: 'var(--ion-color-success)', fontSize: 22 }} />
-                <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>Paired <strong>{savedId}</strong></span>
+                <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>Paired <strong>{savedName ?? savedId}</strong></span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <IonButton fill="outline" onClick={() => router.push('/hives', 'back')}>
@@ -193,6 +210,16 @@ const AddHivePage: React.FC = () => {
             </div>
           )}
         </div>
+        <IonAlert
+          isOpen={!!pairing}
+          header="Name this hive"
+          message="Give it a name you'll recognise, like &quot;Back Garden&quot; or &quot;Hive 1&quot;. You can change this later."
+          inputs={[{ name: 'name', type: 'text', placeholder: 'Hive name', attributes: { maxlength: 16 } }]}
+          buttons={[
+            { text: 'Skip for now', role: 'cancel', handler: () => { void confirmPair(''); } },
+            { text: 'Save', handler: (d) => { void confirmPair(d.name); } },
+          ]}
+        />
       </IonContent>
     </IonPage>
   );

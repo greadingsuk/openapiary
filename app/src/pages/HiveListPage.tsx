@@ -202,26 +202,30 @@ const HiveListPage: React.FC = () => {
             <span className="text-xs oa-muted">kg</span>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-1 pt-1" style={{ borderTop: '1px solid rgba(20, 22, 26, 0.06)' }}>
+        <div className="flex items-center justify-end gap-3 pt-2" style={{ borderTop: '1px solid rgba(20, 22, 26, 0.06)' }}>
           <button
             aria-label={`Refresh ${h.name} live reading`}
-            className="p-2 rounded-full active:opacity-70"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-full active:opacity-70"
+            style={{ minWidth: 44, minHeight: 44, background: 'rgba(20, 22, 26, 0.05)' }}
             disabled={liveBusy}
             onClick={(e) => { e.stopPropagation(); void refreshOneHive(h); }}
           >
             {liveBusy
-              ? <IonSpinner name="crescent" style={{ width: 18, height: 18 }} />
-              : <IonIcon icon={syncOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 20 }} />}
+              ? <IonSpinner name="crescent" style={{ width: 20, height: 20 }} />
+              : <IonIcon icon={syncOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 22 }} />}
+            <span className="text-xs oa-muted">Refresh</span>
           </button>
           <button
             aria-label={`Pull full device history for ${h.name}`}
-            className="p-2 rounded-full active:opacity-70"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-full active:opacity-70"
+            style={{ minWidth: 44, minHeight: 44, background: 'rgba(20, 22, 26, 0.05)' }}
             disabled={histBusy}
             onClick={(e) => { e.stopPropagation(); void pullHistoryOneHive(h); }}
           >
             {histBusy
-              ? <IonSpinner name="crescent" style={{ width: 18, height: 18 }} />
-              : <IonIcon icon={cloudDownloadOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 20 }} />}
+              ? <IonSpinner name="crescent" style={{ width: 20, height: 20 }} />
+              : <IonIcon icon={cloudDownloadOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 22 }} />}
+            <span className="text-xs oa-muted">Full sync</span>
           </button>
         </div>
       </div>
