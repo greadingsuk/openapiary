@@ -21,7 +21,7 @@ type Step = 'connecting' | 'edit' | 'saving' | 'done' | 'error';
 
 // Weight ring capacity on the device (firmware WLOG_CAP) — used to estimate how
 // long the on-device history covers at a given reading cadence.
-const WEIGHT_RING = 5600;
+const WEIGHT_RING = 4096;
 
 interface Props {
   isOpen: boolean;

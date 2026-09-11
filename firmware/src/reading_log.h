@@ -10,8 +10,8 @@
 //                                at the measurement cadence (15 min summer / 1 h winter).
 //   * BATTERY ring (/oa_bl.bin): 1-byte records {uint8 (V-2.5)*50} hourly.
 // Splitting battery out (logged hourly, not per reading) is what lets the weight
-// ring stay 3 B/record and hold ~60 days of 15-minute data in the small
-// (~20 KB usable) internal filesystem.
+// ring stay 3 B/record and hold ~42 days of 15-minute data while preserving
+// LittleFS copy-on-write headroom.
 //
 // Timestamps are NOT stored per record (that would need 4 extra bytes each and
 // blow the storage budget). Instead each ring keeps a small ANCHOR table
@@ -34,17 +34,18 @@ using namespace Adafruit_LittleFS_Namespace;
 static const uint16_t META_MAGIC   = 0x4C32;  // 'L2'
 static const uint8_t  MAX_ANCHORS  = 8;
 
-// Capacities chosen to fit the default ~20 KB usable InternalFS alongside
-// /cal.txt: weight 5600*3 = 16.8 KB (~58 days @15 min), battery 1536*1 = 1.5 KB
-// (~64 days @1 h). Metadata files are <100 B each.
-static const uint16_t WLOG_CAP = 5600;
-static const uint16_t BLOG_CAP = 1536;
+// Leave LittleFS several KB of copy-on-write headroom. The old layout reserved
+// ~20.6 KB on a ~20 KB filesystem, so slot writes failed while nextSeq kept
+// advancing, yielding valid-looking history records containing only zeros.
+static const uint16_t WLOG_CAP = 4096;  // ~42 days @15 min
+static const uint16_t BLOG_CAP = 1024;  // ~42 days @1 h
 // Diagnostic ring for the opt-in test-logging mode: a richer record captured at
 // the (usually shortened) measurement cadence so a field drift can be reviewed
 // later. Small on purpose to stay within the InternalFS budget alongside the
-// weight/battery rings. 384 * 6 = 2.3 KB (~4 days at a 15-min cadence, far more
+// weight/battery rings. 256 * 6 = 1.5 KB (~2.7 days at a 15-min cadence, far more
 // when a test uses a short interval).
-static const uint16_t DLOG_CAP = 384;
+static const uint16_t DLOG_CAP = 256;
+static const char*    LAYOUT_MARKER = "/oa_l3";
 
 struct Anchor {
     uint32_t seq;
@@ -61,7 +62,7 @@ struct RingLog {
     uint8_t     recSize;
     uint16_t    capacity;
 
-    uint32_t nextSeq = 0;               // total records ever appended
+    uint32_t nextSeq = 1;               // 0 is reserved as the app's "none yet" cursor
     uint8_t  nAnchors = 0;
     Anchor   anchors[MAX_ANCHORS];
 
@@ -89,7 +90,7 @@ struct RingLog {
         InternalFS.remove(metaPath);
         File f(InternalFS);
         if (!f.open(metaPath, FILE_O_WRITE)) return;
-        uint8_t buf[4 + 1 + 1 + MAX_ANCHORS * 10];
+        uint8_t buf[9 + MAX_ANCHORS * 10];
         size_t n = 0;
         buf[n++] = (uint8_t)(META_MAGIC & 0xFF);
         buf[n++] = (uint8_t)(META_MAGIC >> 8);
@@ -114,11 +115,11 @@ struct RingLog {
     }
 
     void loadMeta() {
-        nextSeq = 0;
+        nextSeq = 1;
         nAnchors = 0;
         File f(InternalFS);
         if (!f.open(metaPath, FILE_O_READ)) return;
-        uint8_t buf[4 + 1 + 1 + MAX_ANCHORS * 10];
+        uint8_t buf[9 + MAX_ANCHORS * 10];
         int got = f.read(buf, sizeof(buf));
         f.close();
         if (got < 9) return;
@@ -141,32 +142,8 @@ struct RingLog {
         }
     }
 
-    // Ensure the data file exists at full size (sparse-filled with zeros).
-    void ensureDataFile() {
-        File f(InternalFS);
-        if (f.open(dataPath, FILE_O_READ)) {
-            uint32_t sz = f.size();
-            f.close();
-            if (sz >= (uint32_t)capacity * recSize) return;
-        }
-        // Create / grow: append zeros up to capacity*recSize.
-        File w(InternalFS);
-        if (!w.open(dataPath, FILE_O_WRITE)) return;
-        uint8_t zeros[64] = {0};
-        uint32_t target = (uint32_t)capacity * recSize;
-        uint32_t have = w.size();
-        while (have < target) {
-            uint32_t chunk = target - have;
-            if (chunk > sizeof(zeros)) chunk = sizeof(zeros);
-            w.write(zeros, chunk);
-            have += chunk;
-        }
-        w.close();
-    }
-
     void begin() {
         loadMeta();
-        ensureDataFile();
     }
 
     // Drop anchors that are no longer needed (their seq is below the oldest
@@ -201,7 +178,7 @@ struct RingLog {
     // Append one record. `epoch` is the current UTC epoch (0 = unknown).
     // A new anchor is written when the cadence changes, when the clock was just
     // (re)seeded, or on the very first anchored record.
-    void append(const uint8_t* rec, uint32_t epoch, uint16_t intervalSec) {
+    bool append(const uint8_t* rec, uint32_t epoch, uint16_t intervalSec) {
         uint32_t thisSeq = nextSeq;
 
         if (epoch != 0) {
@@ -218,15 +195,16 @@ struct RingLog {
 
         // Write the slot.
         File f(InternalFS);
-        if (f.open(dataPath, FILE_O_WRITE)) {
-            f.seek((uint32_t)(thisSeq % capacity) * recSize);
-            f.write(rec, recSize);
-            f.close();
-        }
+        if (!f.open(dataPath, FILE_O_WRITE)) return false;
+        bool seekOk = f.seek((uint32_t)(thisSeq % capacity) * recSize);
+        size_t wrote = seekOk ? f.write(rec, recSize) : 0;
+        f.close();
+        if (wrote != recSize) return false;
 
         nextSeq++;
         pruneAnchors();
         saveMeta();
+        return true;
     }
 
     // Read the record at a given seq into `out` (recSize bytes). Returns false
@@ -259,6 +237,21 @@ inline RingLog& diagLog() {
 }
 
 inline void begin() {
+    // One-time v1.1 -> v1.2 layout migration. Existing v1.1 data files were
+    // preallocated beyond the filesystem's safe capacity and contain zeros;
+    // remove them so the corrected rings can grow on demand with free headroom.
+    if (!InternalFS.exists(LAYOUT_MARKER)) {
+        const char* paths[] = {
+            "/oa_wl.bin", "/oa_wl.m", "/oa_bl.bin", "/oa_bl.m",
+            "/oa_dl.bin", "/oa_dl.m"
+        };
+        for (const char* path : paths) InternalFS.remove(path);
+        File marker(InternalFS);
+        if (marker.open(LAYOUT_MARKER, FILE_O_WRITE)) {
+            marker.write((uint8_t)3);
+            marker.close();
+        }
+    }
     weightLog().begin();
     batteryLog().begin();
     diagLog().begin();
