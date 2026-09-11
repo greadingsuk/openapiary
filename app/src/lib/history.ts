@@ -13,6 +13,7 @@ import {
 } from './ble';
 import { getSyncState, setSyncState, insertHistoricalReadings, type Reading } from './db';
 import { syncNow } from './sync';
+import { logEvent } from './remoteLog';
 
 export interface HistorySyncResult {
   found: boolean;
@@ -63,6 +64,7 @@ export async function syncDeviceHistory(
 ): Promise<HistorySyncResult> {
   await ensureBleReady();
   onPhase?.('waiting');
+  void logEvent('info', 'history.round.start', { roundMs }, hiveId);
 
   const deadline = Date.now() + roundMs;
   let deviceId: string | null = null;
@@ -77,7 +79,10 @@ export async function syncDeviceHistory(
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  if (!deviceId) return { found: false, added: 0, weightReceived: 0, batteryReceived: 0 };
+  if (!deviceId) {
+    void logEvent('warn', 'history.round.not_found', undefined, hiveId);
+    return { found: false, added: 0, weightReceived: 0, batteryReceived: 0 };
+  }
   onPhase?.('connected');
 
   let added = 0;
@@ -92,8 +97,9 @@ export async function syncDeviceHistory(
 
     const battery = [...hist.battery].sort((a, b) => a.epoch - b.epoch);
     const rows: Reading[] = [];
+    let skippedNoEpoch = 0;
     for (const w of hist.weight) {
-      if (w.epoch === 0) continue; // written before the clock was ever set — can't place in time
+      if (w.epoch === 0) { skippedNoEpoch++; continue; } // written before the clock was ever set — can't place in time
       rows.push({
         hive_id: hiveId,
         ts: w.epoch * 1000,
@@ -104,6 +110,9 @@ export async function syncDeviceHistory(
       });
     }
     added = await insertHistoricalReadings(hiveId, rows);
+    void logEvent('info', 'history.round.drained', {
+      lastWeightSeq, lastBatterySeq, weightReceived, batteryReceived, skippedNoEpoch, added,
+    }, hiveId);
 
     const maxWeightSeq = hist.weight.reduce((m, r) => Math.max(m, r.seq), lastWeightSeq);
     const maxBatterySeq = hist.battery.reduce((m, r) => Math.max(m, r.seq), lastBatterySeq);

@@ -130,6 +130,19 @@
     <h2>Users</h2>
     <div id="usersTable"></div>
   </section>
+  <section class="card" id="logsCard" style="display:none">
+    <h2>Diagnostic Logs</h2>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <input id="logsHive" placeholder="Filter by hive id (optional)" size="20" />
+      <select id="logsSince">
+        <option value="3600000">Last hour</option>
+        <option value="86400000" selected>Last 24 hours</option>
+        <option value="604800000">Last 7 days</option>
+      </select>
+      <button class="ghost" id="logsRefreshBtn">Refresh logs</button>
+    </div>
+    <div id="logsTable"></div>
+  </section>
   <section class="card">
     <h2>Hives (anonymised)</h2>
     <div id="hivesTable"></div>
@@ -336,6 +349,7 @@ $('persona').onchange = async () => {
   currentPersona = $('persona').value;
   localStorage.setItem(LS_PERSONA, currentPersona);
   await loadData();
+  await loadLogs();
 };
 
 async function loadData() {
@@ -377,6 +391,8 @@ async function connect() {
       }
       renderPersonaOptions();
       renderUsers(users);
+      $('logsCard').style.display = '';
+      await loadLogs();
     }
     await loadData();
   } catch (e) {
@@ -426,6 +442,46 @@ async function resetPassword(userId) {
     alert('Reset failed: ' + e.message);
   }
 }
+
+async function loadLogs() {
+  const since = Date.now() - Number($('logsSince').value);
+  const hive = $('logsHive').value.trim();
+  const params = new URLSearchParams({ since: String(since), limit: '500' });
+  if (hive) params.set('hive', hive);
+  else if (currentPersona) params.set('user', currentPersona);
+  try {
+    const { logs } = await api('/v1/admin/logs?' + params.toString());
+    renderLogs(logs);
+  } catch (e) {
+    $('logsTable').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function renderLogs(logs) {
+  if (!logs.length) {
+    $('logsTable').innerHTML = '<div class="empty">No log entries in this window. (Verbose logging is opt-in — Settings &gt; Verbose logging in the app.)</div>';
+    return;
+  }
+  const levelColor = { error: 'var(--accent-2, #b05908)', warn: '#b08a08', info: 'var(--fg)' };
+  const rows = logs.map(l => `
+    <tr>
+      <td class="mono">${new Date(l.ts).toLocaleString()}</td>
+      <td style="color:${levelColor[l.level] || 'inherit'};font-weight:600">${l.level}</td>
+      <td class="mono">${l.event}</td>
+      <td class="mono">${l.hive_id || '-'}</td>
+      <td class="mono">${l.user_prefix}...</td>
+      <td class="mono" style="max-width:360px;overflow-wrap:anywhere">${l.detail || ''}</td>
+    </tr>`).join('');
+  $('logsTable').innerHTML = `
+    <table>
+      <thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Hive</th><th>User</th><th>Detail</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+$('logsRefreshBtn').onclick = () => { void loadLogs(); };
+$('logsSince').onchange = () => { void loadLogs(); };
+
 
 // Auto-connect silently if we already have a session key.
 if (apiKey) {

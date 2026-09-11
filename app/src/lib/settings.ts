@@ -7,6 +7,8 @@ export interface Settings {
   backgroundScan: boolean;
   /** Email of the signed-in account, or null for an anonymous "try it" account. */
   accountEmail: string | null;
+  /** Opt-in: send BLE/sync diagnostic events to the cloud for support debugging. */
+  verboseLogging: boolean;
 }
 
 const KEY = 'openapiary.settings.v1';
@@ -17,6 +19,7 @@ const DEFAULTS: Settings = {
   syncEnabled: false,
   backgroundScan: false,
   accountEmail: null,
+  verboseLogging: false,
 };
 
 export async function loadSettings(): Promise<Settings> {

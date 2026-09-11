@@ -10,6 +10,7 @@
 // Routes:
 //   POST   /v1/account/register          create a new user, returns api_key (one-shot)
 //   POST   /v1/readings                  bulk-insert from app (scoped to caller)
+//   POST   /v1/logs                      bulk-insert opt-in diagnostic log entries
 //   GET    /v1/hives                     list caller's hives
 //   GET    /v1/hives/:id/readings        time-range query
 //   DELETE /v1/hives/:id/readings        delete all readings for one hive
@@ -20,6 +21,7 @@
 //   GET    /v1/admin/fleet/hives         all hives across users (anonymised)
 //   GET    /v1/admin/fleet/hives/:id/readings  raw readings for ONE device (time window)
 //   GET    /v1/admin/fleet/readings      cross-user readings (region/time window)
+//   GET    /v1/admin/logs                diagnostic log entries (filter by user/hive)
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -48,6 +50,14 @@ type Reading = {
     tempC?: number;
     packetId: number;
     rssi?: number;
+};
+
+type LogEntry = {
+    ts: number;
+    hiveId?: string;
+    level: string;
+    event: string;
+    detail?: string;
 };
 
 type Variables = { user: User };
@@ -523,6 +533,32 @@ app.post("/v1/readings", async (c) => {
     return c.json({ ok: true, accepted: body.readings.length });
 });
 
+// --- POST /v1/logs ---
+// Opt-in diagnostic logging (Settings > Verbose logging in the app). Entries
+// are best-effort and never block the app; capped per request so a runaway
+// client can't flood the table.
+app.post("/v1/logs", async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json<{ entries: LogEntry[]; appVersion?: string; platform?: string }>();
+    if (!Array.isArray(body?.entries) || !body.entries.length) return c.json({ error: "bad request" }, 400);
+
+    const entries = body.entries.slice(0, 200);
+    const now = Date.now();
+    const stmts = entries.map((e) =>
+        c.env.DB.prepare(
+            `INSERT INTO device_logs (user_id, hive_id, ts, level, event, detail, app_version, platform, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+            user.id, e.hiveId ?? null, e.ts, e.level, e.event, e.detail ?? null,
+            body.appVersion ?? null, body.platform ?? null, now
+        )
+    );
+    await c.env.DB.batch(stmts);
+
+    return c.json({ ok: true, accepted: entries.length });
+});
+
+
 // --- GET /v1/hives ---
 app.get("/v1/hives", async (c) => {
     const user = c.get("user");
@@ -827,6 +863,38 @@ app.get("/v1/admin/fleet/readings", async (c) => {
     }
     const { results } = await stmt.all();
     return c.json({ readings: results });
+});
+
+// --- ADMIN: diagnostic log entries ---
+// Opt-in from the app (Settings > Verbose logging). Lets us read what a
+// beekeeper's device actually did — BLE scans/connects, sync phases and
+// results — without asking them to reproduce an issue live.
+//   GET /v1/admin/logs?user=<id>&hive=<hiveId>&since=<ms>&limit=<n>
+app.get("/v1/admin/logs", async (c) => {
+    const userId = c.req.query("user");
+    const hiveId = c.req.query("hive");
+    const since = Number(c.req.query("since") ?? Date.now() - 24 * 60 * 60 * 1000);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 500), 1), 5000);
+
+    let stmt;
+    if (hiveId) {
+        stmt = c.env.DB.prepare(
+            `SELECT id, substr(user_id, 1, 8) AS user_prefix, hive_id, ts, level, event, detail, app_version, platform
+             FROM device_logs WHERE hive_id = ? AND ts >= ? ORDER BY ts DESC LIMIT ?`
+        ).bind(hiveId, since, limit);
+    } else if (userId) {
+        stmt = c.env.DB.prepare(
+            `SELECT id, substr(user_id, 1, 8) AS user_prefix, hive_id, ts, level, event, detail, app_version, platform
+             FROM device_logs WHERE user_id = ? AND ts >= ? ORDER BY ts DESC LIMIT ?`
+        ).bind(userId, since, limit);
+    } else {
+        stmt = c.env.DB.prepare(
+            `SELECT id, substr(user_id, 1, 8) AS user_prefix, hive_id, ts, level, event, detail, app_version, platform
+             FROM device_logs WHERE ts >= ? ORDER BY ts DESC LIMIT ?`
+        ).bind(since, limit);
+    }
+    const { results } = await stmt.all();
+    return c.json({ logs: results });
 });
 
 app.get("/", (c) => c.text("OpenApiary API. See /v1/*"));

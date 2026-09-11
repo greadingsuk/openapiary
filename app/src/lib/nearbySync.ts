@@ -2,6 +2,7 @@ import { ensureBleReady, startScan, stopScan } from './ble';
 import { insertReading, listHivesLocal, upsertHive } from './db';
 import { recordDeviceMeta } from './deviceMeta';
 import { syncNow, type SyncResult } from './sync';
+import { logEvent } from './remoteLog';
 
 export interface NearbySyncResult {
   heard: number;
@@ -27,6 +28,7 @@ export interface NearbySyncResult {
 export async function syncNearbyKnownHives(scanMs = 65000, expectedIds?: string[]): Promise<NearbySyncResult> {
   const local = (await listHivesLocal()).map((h) => h.id.toLowerCase());
   const expected = new Set<string>([...(expectedIds ?? []).map((s) => s.toLowerCase()), ...local]);
+  void logEvent('info', 'nearbySync.start', { scanMs, expected: [...expected] });
 
   await ensureBleReady();
 
@@ -64,6 +66,7 @@ export async function syncNearbyKnownHives(scanMs = 65000, expectedIds?: string[
 
   await stopScan().catch(() => undefined);
 
+  void logEvent('info', 'nearbySync.result', { heard: heardIds.size, stored, heardIds: [...heardIds] });
   return {
     heard: heardIds.size,
     stored,

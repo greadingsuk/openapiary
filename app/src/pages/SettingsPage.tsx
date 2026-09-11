@@ -127,6 +127,23 @@ const SettingsPage: React.FC = () => {
           </IonItem>
         </IonList>
 
+        {/* Diagnostics */}
+        <IonList inset>
+          <IonListHeader><IonLabel>Diagnostics</IonLabel></IonListHeader>
+          <IonItem>
+            <IonToggle
+              checked={s.verboseLogging}
+              onIonChange={(e) => setS({ ...s, verboseLogging: e.detail.checked })}
+            >
+              <IonLabel>Verbose logging</IonLabel>
+              <IonNote color="medium">
+                Sends BLE scan/sync activity to Open Apiary support so an issue can be
+                diagnosed without you needing to reproduce it live. Off by default.
+              </IonNote>
+            </IonToggle>
+          </IonItem>
+        </IonList>
+
         <div className="ion-padding">
           <IonButton expand="block" onClick={save}>Save settings</IonButton>
           {savedAt && (
