@@ -13,7 +13,7 @@ import { Capacitor } from '@capacitor/core';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 import { latestFirmware, updateFirmware, type FirmwareInfo } from '../lib/ota';
 import { readAdvertOnce } from '../lib/ble';
-import { latestReading } from '../lib/db';
+import { latestReading, resetSyncState } from '../lib/db';
 import { loadDeviceMeta, recordDeviceMeta } from '../lib/deviceMeta';
 
 const normVer = (v: string) => v.trim().toLowerCase().replace(/^v/, '');
@@ -109,6 +109,7 @@ const FirmwarePage: React.FC = () => {
       );
       const v = confirmedVersion ?? latest.version;
       setInstalled(v);
+      await resetSyncState(id);
       if (Capacitor.isNativePlatform()) void recordDeviceMeta(id, { fw: v });
       setResult({ ok: true, version: v, confirmed: !!confirmedVersion });
     } catch (e) {
