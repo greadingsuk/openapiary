@@ -2,10 +2,10 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonBackButton, IonButtons, IonButton, IonIcon,
   IonSegment, IonSegmentButton, IonLabel, IonAlert, IonToast, IonActionSheet,
-  IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
+  IonRefresher, IonRefresherContent, IonSpinner, useIonViewWillEnter, useIonRouter,
 } from '@ionic/react';
 import { ellipsisHorizontal, pencilOutline, fileTrayFullOutline, hardwareChipOutline, chevronDownOutline, chevronForwardOutline, checkmarkCircle, ellipseOutline, cloudDownloadOutline, scaleOutline, speedometerOutline, optionsOutline, pulseOutline } from 'ionicons/icons';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
 import { loadSettings } from '../lib/settings';
@@ -16,7 +16,9 @@ import {
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
 import { renameHive, describeRename } from '../lib/deviceActions';
-import { syncDeviceHistory } from '../lib/history';
+import { syncDeviceHistory, type SyncPhase } from '../lib/history';
+import { withContinuePrompts } from '../lib/retryRounds';
+import { loadDeviceMeta, activeHeartbeatSec, fmtHeartbeat } from '../lib/deviceMeta';
 import { loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
 import WeightChart from '../components/WeightChart';
@@ -61,10 +63,31 @@ const HiveDetailPage: React.FC = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [collapse, setCollapse] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  const [historySyncing, setHistorySyncing] = useState(false);
+  const [syncPhase, setSyncPhase] = useState<SyncPhase | null>(null);
+  const [heartbeatSec, setHeartbeatSec] = useState(60);
+  const [continuePrompt, setContinuePrompt] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
+  const historySyncingRef = useRef(false);
+
+  function askContinue(): Promise<boolean> {
+    return new Promise((resolve) => {
+      setContinuePrompt({
+        message: `Still no sign of the scale after 2 minutes (heartbeat set to ${fmtHeartbeat(heartbeatSec)}). Keep waiting for another 2 minutes?`,
+        resolve,
+      });
+    });
+  }
+
+  function phaseText(phase: SyncPhase | null): string {
+    if (phase === 'waiting') return `Waiting for the scale (heartbeat ~${fmtHeartbeat(heartbeatSec)}, please be patient)\u2026`;
+    if (phase === 'connected') return 'Connected \u2014 preparing to collect readings\u2026';
+    if (phase === 'draining') return 'Connected \u2014 collecting readings\u2026';
+    return 'Syncing device history\u2026';
+  }
 
   async function load() {
-    const [hives, last, recent, ap] = await Promise.all([
-      listHivesLocal(), latestReading(id), getReadingsLocal(id, 0), loadApiaries(),
+    const [hives, last, recent, ap, meta] = await Promise.all([
+      listHivesLocal(), latestReading(id), getReadingsLocal(id, 0), loadApiaries(), loadDeviceMeta(),
     ]);
     const h = hives.find((x) => x.id === id);
     if (h) setName(h.name);
@@ -72,6 +95,7 @@ const HiveDetailPage: React.FC = () => {
     setKnownApiaries(apiaryNames(ap).filter((n) => n !== 'Unassigned'));
     setLatest(last);
     setReadings(recent);
+    setHeartbeatSec(activeHeartbeatSec(meta[id]));
     setLoading(false);
     try {
       const s = await loadSettings();
@@ -90,7 +114,33 @@ const HiveDetailPage: React.FC = () => {
     } catch { /* offline */ }
   }
 
-  useIonViewWillEnter(() => { void load(); });
+  // Best-effort background drain of the on-device 15-min log, silent on
+  // failure/miss (the scale is often out of BLE range) — surfaces a toast
+  // only when it actually recovers something. Runs on open + pull-to-refresh
+  // so gaps left by live-advert-only captures get backfilled automatically.
+  // Single round only (no continue-prompt) — it's a passive, unattended
+  // best-effort pass, not a deliberate wait the user is watching.
+  async function drainHistorySilently(roundMs: number) {
+    if (historySyncingRef.current) return;
+    historySyncingRef.current = true;
+    setHistorySyncing(true);
+    setSyncPhase(null);
+    try {
+      const res = await syncDeviceHistory(id, id.toUpperCase(), latest?.battery_v ?? undefined, roundMs, setSyncPhase);
+      if (res.added > 0) {
+        await load();
+        setToast(`Synced ${res.added} reading${res.added === 1 ? '' : 's'} from the scale.`);
+      }
+    } catch {
+      // best-effort — the manual "Sync history from scale" action surfaces errors
+    } finally {
+      historySyncingRef.current = false;
+      setHistorySyncing(false);
+      setSyncPhase(null);
+    }
+  }
+
+  useIonViewWillEnter(() => { void load(); void drainHistorySilently(70000); });
 
   async function doRename(newName: string) {
     const trimmed = (newName ?? '').trim();
@@ -133,18 +183,30 @@ const HiveDetailPage: React.FC = () => {
   }
 
   // Pull the scale's on-device log over BLE to backfill gaps passive scanning
-  // missed (firmware v1.0.9+). Best-effort; needs the scale nearby and awake.
+  // missed (firmware v1.0.9+). Runs in 2-min rounds — the heartbeat is user-
+  // configurable (10s-300s), so rather than assume any fixed total wait is
+  // enough, we check in with the user between rounds.
   async function doSyncHistory() {
-    setToast('Syncing history from the scale\u2026');
+    if (historySyncingRef.current) return;
+    historySyncingRef.current = true;
+    setHistorySyncing(true);
+    setSyncPhase(null);
     try {
-      const res = await syncDeviceHistory(id, id.toUpperCase(), latest?.battery_v ?? undefined);
-      if (!res.found) { setToast('Scale not found \u2014 make sure it is nearby and awake.'); return; }
+      const res = await withContinuePrompts(
+        () => syncDeviceHistory(id, id.toUpperCase(), latest?.battery_v ?? undefined, 120000, setSyncPhase),
+        askContinue,
+      );
+      if (!res.found) { setToast('Scale not found \u2014 keep it within a metre and try again.'); return; }
       await load();
       setToast(res.added > 0
         ? `Synced ${res.added} reading${res.added === 1 ? '' : 's'} from the scale.`
         : 'Already up to date with the scale.');
     } catch (e: unknown) {
       setToast(`History sync failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      historySyncingRef.current = false;
+      setHistorySyncing(false);
+      setSyncPhase(null);
     }
   }
 
@@ -199,9 +261,20 @@ const HiveDetailPage: React.FC = () => {
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <IonRefresher slot="fixed" onIonRefresh={async (e) => { await load(); e.detail.complete(); }}>
+        <IonRefresher slot="fixed" onIonRefresh={async (e) => {
+          await load();
+          e.detail.complete();
+          void drainHistorySilently(70000);
+        }}>
           <IonRefresherContent />
         </IonRefresher>
+
+        {historySyncing && (
+          <div className="flex items-center gap-2 px-4 pt-3 text-xs oa-muted">
+            <IonSpinner name="crescent" style={{ width: 14, height: 14 }} />
+            {phaseText(syncPhase)}
+          </div>
+        )}
 
         {loading ? (
           <ListSkeleton rows={3} />
@@ -256,47 +329,51 @@ const HiveDetailPage: React.FC = () => {
               <WeightChart readings={windowed} metric="battery" height={120} />
             </div>
 
-            <button className="oa-card p-4 flex items-center justify-between" onClick={() => setHistoryOpen((o) => !o)}>
-              <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>History ({windowed.length})</span>
-              <IonIcon icon={historyOpen ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)' }} />
-            </button>
-            {historyOpen && (
-              <>
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-4">
-                    <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
-                      onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
-                      {selectMode ? 'Cancel' : 'Select'}
-                    </button>
-                    <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
-                      {collapse ? 'Show all' : 'Group repeats'}
-                    </button>
+            <div className="oa-card p-4">
+              <button className="w-full flex items-center justify-between" onClick={() => setHistoryOpen((o) => !o)}>
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--oa-ink)' }}>
+                  Device Readings History <span className="font-normal oa-muted">({windowed.length})</span>
+                </h3>
+                <IonIcon icon={historyOpen ? chevronDownOutline : chevronForwardOutline} style={{ color: 'var(--oa-ink-subtle)' }} />
+              </button>
+              {historyOpen && (
+                <>
+                  <div className="flex items-center justify-between pt-3 mt-3"
+                    style={{ borderTop: '1px solid rgba(20, 22, 26, 0.06)' }}>
+                    <div className="flex items-center gap-4">
+                      <button className="text-sm" style={{ color: 'var(--oa-honey-700)' }}
+                        onClick={() => { setSelectMode((s) => !s); setSelected(new Set()); }}>
+                        {selectMode ? 'Cancel' : 'Select'}
+                      </button>
+                      <button className="text-sm oa-muted" onClick={() => setCollapse((c) => !c)}>
+                        {collapse ? 'Show all' : 'Group repeats'}
+                      </button>
+                    </div>
+                    {selectMode && (
+                      <button className="text-sm font-semibold" disabled={selected.size === 0}
+                        style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
+                        onClick={() => setConfirmDelete(true)}>
+                        Delete {selected.size || ''}
+                      </button>
+                    )}
                   </div>
-                  {selectMode && (
-                    <button className="text-sm font-semibold" disabled={selected.size === 0}
-                      style={{ color: selected.size ? 'var(--ion-color-danger)' : 'var(--oa-ink-subtle)' }}
-                      onClick={() => setConfirmDelete(true)}>
-                      Delete {selected.size || ''}
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-col gap-2">
-                  {historyGroups.slice(0, 200).map((g) => {
-                    const sel = g.tsList.some((t) => selected.has(t));
-                    return (
-                      <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
-                        onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
-                        {selectMode && (
-                          <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
-                            style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
-                        )}
-                        <div className="flex flex-col flex-1">
-                          <span className="oa-numeral font-semibold flex items-center gap-2" style={{ color: 'var(--oa-ink)' }}>
-                            {g.weight?.toFixed(2) ?? '--'} kg
-                            {g.tsList.length > 1 && (
-                              <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
-                            )}
-                          </span>
+                  <div className="flex flex-col gap-2 pt-3">
+                    {historyGroups.slice(0, 200).map((g) => {
+                      const sel = g.tsList.some((t) => selected.has(t));
+                      return (
+                        <div key={g.lastTs} className="flex items-center gap-3 px-4 py-3 oa-stat"
+                          onClick={() => selectMode && toggleGroup(g)} style={{ outline: sel ? '2px solid var(--oa-honey-400)' : 'none' }}>
+                          {selectMode && (
+                            <IonIcon icon={sel ? checkmarkCircle : ellipseOutline}
+                              style={{ color: sel ? 'var(--oa-honey-600)' : 'var(--oa-ink-subtle)', fontSize: 22 }} />
+                          )}
+                          <div className="flex flex-col flex-1">
+                            <span className="oa-numeral font-semibold flex items-center gap-2" style={{ color: 'var(--oa-ink)' }}>
+                              {g.weight?.toFixed(2) ?? '--'} kg
+                              {g.tsList.length > 1 && (
+                                <span className="text-xs font-normal oa-muted">×{g.tsList.length}</span>
+                              )}
+                            </span>
                           <span className="text-xs oa-subtle">{new Date(g.lastTs).toLocaleString()}</span>
                         </div>
                         <span className="text-sm oa-muted">{g.battery?.toFixed(2) ?? '--'} V</span>
@@ -306,6 +383,7 @@ const HiveDetailPage: React.FC = () => {
                 </div>
               </>
             )}
+            </div>
           </div>
         )}
 
@@ -342,6 +420,15 @@ const HiveDetailPage: React.FC = () => {
         <IntervalsWizard isOpen={showIntervals} deviceName={id.toUpperCase()} onClose={() => setShowIntervals(false)} />
         <TestLoggingModal isOpen={showTestLog} deviceName={id.toUpperCase()} onClose={() => setShowTestLog(false)} />
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={3000} onDidDismiss={() => setToast(null)} />
+        <IonAlert
+          isOpen={!!continuePrompt}
+          header="Still waiting"
+          message={continuePrompt?.message}
+          buttons={[
+            { text: 'Stop', role: 'cancel', handler: () => { continuePrompt?.resolve(false); setContinuePrompt(null); } },
+            { text: 'Keep waiting', handler: () => { continuePrompt?.resolve(true); setContinuePrompt(null); } },
+          ]}
+        />
         <IonAlert isOpen={askCustom} onDidDismiss={() => setAskCustom(false)} header="Custom range"
           message="Number of days to show (1\u2013730)."
           inputs={[{ name: 'days', type: 'number', value: customDays, min: 1, max: 730 }]}

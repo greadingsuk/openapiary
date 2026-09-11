@@ -21,6 +21,8 @@ export interface HistorySyncResult {
   batteryReceived: number;
 }
 
+export type SyncPhase = 'waiting' | 'connected' | 'draining';
+
 // Nearest battery voltage at or before a given epoch (battery is logged hourly).
 function batteryAt(sortedBattery: HistBatteryRecord[], epoch: number, fallback?: number): number | undefined {
   if (sortedBattery.length === 0) return fallback;
@@ -36,27 +38,53 @@ function batteryAt(sortedBattery: HistBatteryRecord[], epoch: number, fallback?:
 
 /**
  * Connect to a scale by name, drain any new log records, insert them locally,
- * advance the sync cursor, then push to the cloud. Best-effort: silently
- * resolves with found:false if the scale isn't heard (asleep / out of range).
- * Native only — needs a real BLE connection.
+ * advance the sync cursor, then push to the cloud. Native only — needs a real
+ * BLE connection.
+ *
+ * This is ONE bounded "round" (default 2 min): the scale's heartbeat is
+ * user-configurable (10s-300s) and only briefly connectable each cycle, so a
+ * single round may legitimately not catch it (e.g. a 5-min heartbeat won't
+ * necessarily land within one 2-min round). Resolves found:false rather than
+ * waiting indefinitely — callers should offer the user another round (see
+ * lib/retryRounds.ts) rather than assume one round is always enough.
  *
  * @param fallbackBatteryV last live battery (from an advert) used when a reading
  *   predates any logged battery sample, since the cloud requires a battery value.
+ * @param roundMs length of this attempt before giving up (default 120s).
+ * @param onPhase optional progress callback: 'waiting' (scanning/connecting) ->
+ *   'connected' (session open) -> 'draining' (reading the log).
  */
 export async function syncDeviceHistory(
   hiveId: string,
   deviceName: string,
   fallbackBatteryV?: number,
+  roundMs = 120000,
+  onPhase?: (phase: SyncPhase) => void,
 ): Promise<HistorySyncResult> {
   await ensureBleReady();
-  const deviceId = await findDeviceId(deviceName, 8000);
-  if (!deviceId) return { found: false, added: 0, weightReceived: 0, batteryReceived: 0 };
+  onPhase?.('waiting');
 
-  await connectDevice(deviceId);
+  const deadline = Date.now() + roundMs;
+  let deviceId: string | null = null;
+  while (Date.now() < deadline && !deviceId) {
+    const id = await findDeviceId(deviceName, Math.min(65000, deadline - Date.now()));
+    if (!id) continue; // not heard this pass — keep listening until the round ends
+    try {
+      await connectDevice(id);
+      deviceId = id;
+    } catch {
+      // Connect raced the connectable window closing — wait a beat and retry.
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  if (!deviceId) return { found: false, added: 0, weightReceived: 0, batteryReceived: 0 };
+  onPhase?.('connected');
+
   let added = 0;
   let weightReceived = 0;
   let batteryReceived = 0;
   try {
+    onPhase?.('draining');
     const { lastWeightSeq, lastBatterySeq } = await getSyncState(hiveId);
     const hist = await drainHistoryConnected(deviceId, lastWeightSeq, lastBatterySeq);
     weightReceived = hist.weight.length;

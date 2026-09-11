@@ -15,6 +15,7 @@ import {
   findDeviceId, connectDevice, disconnectDevice,
   readIntervalsConnected, setIntervalsConnected, type SeasonIntervals,
 } from '../lib/ble';
+import { recordDeviceMeta } from '../lib/deviceMeta';
 
 type Step = 'connecting' | 'edit' | 'saving' | 'done' | 'error';
 
@@ -74,7 +75,12 @@ const IntervalsWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
         }
         await connectDevice(id);
         connectedIdRef.current = id;
-        setIv(await readIntervalsConnected(id));
+        const read = await readIntervalsConnected(id);
+        setIv(read);
+        void recordDeviceMeta(deviceName, {
+          summerHeartbeatSec: read.summerHeartbeatSec,
+          winterHeartbeatSec: read.winterHeartbeatSec,
+        });
         setStep('edit');
       } catch (e) {
         dropConnection();
@@ -99,6 +105,10 @@ const IntervalsWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
     setStep('saving');
     try {
       await setIntervalsConnected(id, iv);
+      void recordDeviceMeta(deviceName, {
+        summerHeartbeatSec: iv.summerHeartbeatSec,
+        winterHeartbeatSec: iv.winterHeartbeatSec,
+      });
       setStep('done');
     } catch (e) {
       dropConnection();
