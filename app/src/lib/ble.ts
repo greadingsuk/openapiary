@@ -242,6 +242,20 @@ export async function tareConnected(deviceId: string): Promise<void> {
   );
 }
 
+/** Push the current time on an already-open connection, without touching the
+ * name. Called opportunistically on every history sync so a scale that never
+ * had its clock seeded (e.g. never renamed since pairing) starts logging
+ * real timestamps instead of epoch=0 placeholders. */
+export async function pushTimeConnected(deviceId: string, tzOffsetMin?: number): Promise<void> {
+  const tz = tzOffsetMin ?? -new Date().getTimezoneOffset();
+  const epochSec = Math.floor(Date.now() / 1000);
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_TIME, timeToDataView(epochSec, tz)),
+    8000,
+    'Write time',
+  );
+}
+
 /** Push a new scale factor (computed app-side from a known-weight delta) to an
  * already-open connection. Works for both empty-bench and hive-in-field flows. */
 export async function setFactorConnected(deviceId: string, factor: number): Promise<void> {

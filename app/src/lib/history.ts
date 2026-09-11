@@ -9,11 +9,12 @@
 
 import {
   ensureBleReady, findDeviceId, connectDevice, disconnectDevice,
-  drainHistoryConnected, type HistBatteryRecord,
+  drainHistoryConnected, pushTimeConnected, readIntervalsConnected, type HistBatteryRecord,
 } from './ble';
 import { getSyncState, setSyncState, insertHistoricalReadings, type Reading } from './db';
 import { syncNow } from './sync';
 import { logEvent } from './remoteLog';
+import { isWinterMonth } from './deviceMeta';
 
 export interface HistorySyncResult {
   found: boolean;
@@ -85,6 +86,10 @@ export async function syncDeviceHistory(
   }
   onPhase?.('connected');
 
+  // Best-effort: seed the scale's clock on every connect (not just on rename)
+  // so a scale that never had a time push doesn't keep logging epoch=0 records.
+  try { await pushTimeConnected(deviceId); } catch { /* not fatal — estimation below covers it */ }
+
   let added = 0;
   let weightReceived = 0;
   let batteryReceived = 0;
@@ -95,23 +100,50 @@ export async function syncDeviceHistory(
     weightReceived = hist.weight.length;
     batteryReceived = hist.battery.length;
 
+    // The scale's own reading cadence, used to ESTIMATE a timestamp for any
+    // record logged before the clock was ever seeded (epoch=0) instead of
+    // discarding it outright — losing real weight data to a missing clock is
+    // worse than a timestamp that's approximate to within one reading interval.
+    let readingIntervalSec = 900; // sensible fallback (firmware summer default)
+    try {
+      const iv = await readIntervalsConnected(deviceId);
+      readingIntervalSec = isWinterMonth() ? iv.winterReadingSec : iv.summerReadingSec;
+    } catch { /* keep fallback */ }
+
+    const validWeights = hist.weight.filter((w) => w.epoch !== 0);
+    const maxSeq = hist.weight.reduce((m, w) => Math.max(m, w.seq), 0);
+    const nowSec = Math.floor(Date.now() / 1000);
+    function estimatedEpoch(seq: number): number {
+      if (validWeights.length === 0) return nowSec - (maxSeq - seq) * readingIntervalSec;
+      // Anchor to the nearest record that DOES have a real timestamp.
+      let anchor = validWeights[0];
+      for (const v of validWeights) {
+        if (Math.abs(v.seq - seq) < Math.abs(anchor.seq - seq)) anchor = v;
+      }
+      return anchor.epoch + (seq - anchor.seq) * readingIntervalSec;
+    }
+
     const battery = [...hist.battery].sort((a, b) => a.epoch - b.epoch);
     const rows: Reading[] = [];
-    let skippedNoEpoch = 0;
+    let estimated = 0;
     for (const w of hist.weight) {
-      if (w.epoch === 0) { skippedNoEpoch++; continue; } // written before the clock was ever set — can't place in time
+      let epoch = w.epoch;
+      if (epoch === 0) {
+        epoch = estimatedEpoch(w.seq);
+        estimated++;
+      }
       rows.push({
         hive_id: hiveId,
-        ts: w.epoch * 1000,
+        ts: epoch * 1000,
         weight_kg: w.weightKg,
         temp_c: w.tempC,
-        battery_v: batteryAt(battery, w.epoch, fallbackBatteryV),
+        battery_v: batteryAt(battery, epoch, fallbackBatteryV),
         packet_id: w.seq,
       });
     }
     added = await insertHistoricalReadings(hiveId, rows);
     void logEvent('info', 'history.round.drained', {
-      lastWeightSeq, lastBatterySeq, weightReceived, batteryReceived, skippedNoEpoch, added,
+      lastWeightSeq, lastBatterySeq, weightReceived, batteryReceived, estimated, added,
     }, hiveId);
 
     const maxWeightSeq = hist.weight.reduce((m, r) => Math.max(m, r.seq), lastWeightSeq);

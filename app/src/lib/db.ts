@@ -365,6 +365,24 @@ export async function setSyncState(hiveId: string, lastWeightSeq: number, lastBa
   );
 }
 
+/** Rewind a hive's history cursor to 0 so the next sync re-requests every
+ * on-device log record from scratch. Recovery tool for when records were
+ * previously drained but discarded (e.g. epoch=0 before the clock was ever
+ * seeded) — the cursor had already advanced past them as "seen". */
+export async function resetSyncState(hiveId: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    memSyncState.set(hiveId, { lastWeightSeq: 0, lastBatterySeq: 0 });
+    return;
+  }
+  await db!.run(
+    `INSERT INTO hive_sync (hive_id, last_weight_seq, last_battery_seq)
+     VALUES (?, 0, 0)
+     ON CONFLICT(hive_id) DO UPDATE SET last_weight_seq = 0, last_battery_seq = 0`,
+    [hiveId],
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Offline-first read helpers. Screens read from these FIRST (instant, works
 // offline); cloud data is merged in on top when a network is available.

@@ -10,7 +10,7 @@ import { useParams } from 'react-router-dom';
 import { getReadings } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
-  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings,
+  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteReadings, resetSyncState,
   type Reading,
 } from '../lib/db';
 import { useOnline } from '../lib/useOnline';
@@ -216,6 +216,15 @@ const HiveDetailPage: React.FC = () => {
     }
   }
 
+  // Rewind the on-device history cursor to 0 and re-sync. Recovery tool for
+  // records that were previously drained but discarded (e.g. logged with
+  // epoch=0 before the scale's clock was ever seeded) — the cursor had
+  // already advanced past them as "seen", so a normal sync won't re-fetch them.
+  async function doRedownloadHistory() {
+    await resetSyncState(id);
+    await doSyncHistory();
+  }
+
   const now = Date.now();
   const f = freshnessFor(latest?.ts ?? null, now);
   const rangeMs = range === 'custom' ? customDays * 86400_000 : RANGE_MS[range];
@@ -399,6 +408,7 @@ const HiveDetailPage: React.FC = () => {
             { text: 'Calibration & accuracy check', icon: speedometerOutline, handler: () => setShowCalibrate(true) },
             { text: 'Measurement intervals', icon: optionsOutline, handler: () => setShowIntervals(true) },
             { text: 'Sync history from scale', icon: cloudDownloadOutline, handler: () => { void doSyncHistory(); } },
+            { text: 'Redownload full history', icon: cloudDownloadOutline, handler: () => { void doRedownloadHistory(); } },
             { text: 'Test logging (diagnostics)', icon: pulseOutline, handler: () => setShowTestLog(true) },
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
