@@ -125,6 +125,14 @@ export async function deleteCloudReadings(s: Settings, hiveId: string): Promise<
   if (!r.ok) throw new Error(`DELETE readings ${r.status}`);
 }
 
+/** Remove a scale and all of its readings from this account, ready for another owner to add it. */
+export async function deleteCloudHive(s: Settings, hiveId: string): Promise<void> {
+  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}`, {
+    method: 'DELETE', headers: headers(s),
+  });
+  if (!r.ok) throw new Error(`DELETE hive ${r.status}`);
+}
+
 /** Update a hive's mutable fields (currently the friendly name). */
 export async function patchHive(
   s: Settings,

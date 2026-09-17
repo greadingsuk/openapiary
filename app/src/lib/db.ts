@@ -338,6 +338,18 @@ export async function markSynced(hiveId: string, timestamps: number[]): Promise<
   );
 }
 
+/** Prevent retained local rows being uploaded again after their cloud copy is deleted. */
+export async function markAllReadingsSynced(hiveId: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    for (const reading of memReadings) {
+      if (reading.hive_id === hiveId) reading.synced = 1;
+    }
+    return;
+  }
+  await db!.run('UPDATE readings SET synced = 1 WHERE hive_id = ?', [hiveId]);
+}
+
 export async function unsyncedCount(): Promise<number> {
   await initDb();
   if (useMemory) return memReadings.filter((r) => !r.synced).length;

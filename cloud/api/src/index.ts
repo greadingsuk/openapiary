@@ -14,6 +14,7 @@
 //   GET    /v1/hives                     list caller's hives
 //   GET    /v1/hives/:id/readings        time-range query
 //   DELETE /v1/hives/:id/readings        delete all readings for one hive
+//   DELETE /v1/hives/:id                 remove one scale and its history from caller account
 //   PATCH  /v1/hives/:id                 update name / public / lat / lon / region
 //
 //   --- admin (X-Admin-Key) ---
@@ -633,6 +634,22 @@ app.delete("/v1/hives/:id/readings", async (c) => {
         result = await c.env.DB.prepare(`DELETE FROM readings WHERE hive_id = ?`).bind(id).run();
     }
     return c.json({ ok: true, deleted: result.meta.changes ?? 0 });
+});
+
+// --- DELETE /v1/hives/:id ---
+// Account-transfer action: delete the owner-scoped cloud record and history so
+// the physical scale can be added by another user. The scale's flash history is
+// intentionally untouched; firmware support is required to erase that safely.
+app.delete("/v1/hives/:id", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const owner = await c.env.DB.prepare(`SELECT user_id FROM hives WHERE id = ?`)
+        .bind(id)
+        .first<{ user_id: string | null }>();
+    if (!owner || owner.user_id !== user.id) return c.json({ error: "not found" }, 404);
+    const deletedReadings = await c.env.DB.prepare(`DELETE FROM readings WHERE hive_id = ?`).bind(id).run();
+    await c.env.DB.prepare(`DELETE FROM hives WHERE id = ?`).bind(id).run();
+    return c.json({ ok: true, deleted: deletedReadings.meta.changes ?? 0 });
 });
 
 // --- PATCH /v1/hives/:id ---

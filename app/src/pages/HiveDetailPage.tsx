@@ -10,7 +10,7 @@ import { useParams } from 'react-router-dom';
 import { deleteCloudReadings, getReadings } from '../lib/api';
 import { loadSettings } from '../lib/settings';
 import {
-  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteAllReadings, deleteReadings, removeHiveLocal, resetHiveCache, resetSyncState,
+  listHivesLocal, getReadingsLocal, latestReading, insertReading, deleteAllReadings, deleteReadings, markAllReadingsSynced, removeHiveLocal, resetHiveCache, resetSyncState,
   type Reading,
 } from '../lib/db';
 import { useOnline } from '../lib/useOnline';
@@ -52,8 +52,6 @@ const HiveDetailPage: React.FC = () => {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [confirmResetCache, setConfirmResetCache] = useState(false);
   const [showDeleteChoices, setShowDeleteChoices] = useState(false);
   const [showRename, setShowRename] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -183,19 +181,6 @@ const HiveDetailPage: React.FC = () => {
     setSelectMode(false);
     await load();
     setToast('Readings deleted');
-  }
-
-  async function removeFromPhone() {
-    const apiaries = await loadApiaries();
-    await hideHive(apiaries, id);
-    await removeHiveLocal(id);
-    router.push('/hives', 'back');
-  }
-
-  async function resetCacheFromCloud() {
-    await resetHiveCache(id);
-    await load();
-    setToast('Phone cache cleared. Your saved cloud history has been restored.');
   }
 
   async function deleteAll(scope: 'phone' | 'cloud-and-phone') {
@@ -439,9 +424,7 @@ const HiveDetailPage: React.FC = () => {
             { text: 'Test logging (diagnostics)', icon: pulseOutline, handler: () => setShowTestLog(true) },
             { text: 'Rename', icon: pencilOutline, handler: () => setShowRename(true) },
             { text: 'Move to apiary', icon: fileTrayFullOutline, handler: () => setShowMove(true) },
-            { text: 'Rebuild phone cache from cloud', handler: () => setConfirmResetCache(true) },
-            { text: 'Delete all readings', role: 'destructive', handler: () => setShowDeleteChoices(true) },
-            { text: 'Remove from this phone', role: 'destructive', handler: () => setConfirmRemove(true) },
+            { text: 'Delete scale data', role: 'destructive', handler: () => setShowDeleteChoices(true) },
             { text: 'Firmware update', icon: hardwareChipOutline, handler: () => router.push(`/hive/${encodeURIComponent(id)}/firmware`, 'forward') },
             { text: 'Cancel', role: 'cancel' },
           ]} />
@@ -482,17 +465,15 @@ const HiveDetailPage: React.FC = () => {
         <IonAlert isOpen={confirmDelete} onDidDismiss={() => setConfirmDelete(false)} header="Delete readings"
           message={`Permanently delete ${selected.size} reading${selected.size === 1 ? '' : 's'}? This can't be undone.`}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Delete', role: 'destructive', handler: () => { void deleteSelected(); } }]} />
-        <IonAlert isOpen={confirmRemove} onDidDismiss={() => setConfirmRemove(false)} header="Remove scale from this phone"
-          message="This removes the local copy and hides it from this iPhone. Your cloud history and the scale itself are not changed. Scan it again to set it up afresh."
-          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Remove', role: 'destructive', handler: () => { void removeFromPhone(); } }]} />
-        <IonAlert isOpen={confirmResetCache} onDidDismiss={() => setConfirmResetCache(false)} header="Rebuild phone cache"
-          message="This removes local readings and sync state, then reloads this scale's saved cloud history. It does not change the scale or delete cloud data."
-          buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Rebuild', role: 'destructive', handler: () => { void resetCacheFromCloud(); } }]} />
-        <IonActionSheet isOpen={showDeleteChoices} onDidDismiss={() => setShowDeleteChoices(false)} header="Delete all readings"
-          subHeader="The scale keeps its on-device log; it cannot be erased from the app yet."
+        <IonActionSheet isOpen={showDeleteChoices} onDidDismiss={() => setShowDeleteChoices(false)} header="Delete scale data"
+          subHeader="Phone deletion records a marker, so old readings on the scale cannot automatically re-upload. Erasing the scale log requires a forthcoming firmware update."
           buttons={[
             { text: 'Delete from this phone only', role: 'destructive', handler: () => { void deleteAll('phone'); } },
             { text: 'Delete from cloud and this phone', role: 'destructive', handler: () => { void deleteAll('cloud-and-phone'); } },
+            { text: 'Delete from cloud only', role: 'destructive', handler: () => { void (async () => { const settings = await loadSettings(); if (!settings.apiKey) throw new Error('Sign in before deleting cloud readings.'); await deleteCloudReadings(settings, id); await markAllReadingsSynced(id); setToast('Cloud readings deleted. Phone and scale history are retained.'); })().catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
+            { text: 'Delete from scale only (firmware update required)', disabled: true },
+            { text: 'Delete from phone and scale (firmware update required)', disabled: true },
+            { text: 'Delete from phone, scale, and cloud (firmware update required)', disabled: true },
             { text: 'Cancel', role: 'cancel' },
           ]} />
       </IonContent>

@@ -4,15 +4,17 @@
 
 import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
-  IonRefresher, IonRefresherContent, useIonViewWillEnter,
+  IonRefresher, IonRefresherContent, useIonViewWillEnter, IonActionSheet, IonIcon, IonToast,
 } from '@ionic/react';
+import { trashOutline } from 'ionicons/icons';
 import { useState } from 'react';
-import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '../lib/db';
-import { listHives } from '../lib/api';
+import { listHivesLocal, latestReadingPerHive, removeHiveLocal, type Hive, type Reading } from '../lib/db';
+import { deleteCloudHive, listHives } from '../lib/api';
 import { loadDeviceMeta, type DeviceMetaStore } from '../lib/deviceMeta';
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
+import { hideHive, loadApiaries } from '../lib/apiaries';
 import { StatTile, StatusDot, EmptyState, ListSkeleton } from '../components/ui';
 
 const FleetPage: React.FC = () => {
@@ -21,6 +23,24 @@ const FleetPage: React.FC = () => {
   const [hives, setHives] = useState<Hive[]>([]);
   const [latest, setLatest] = useState<Map<string, Reading>>(new Map());
   const [meta, setMeta] = useState<DeviceMetaStore>({});
+  const [deleteTarget, setDeleteTarget] = useState<Hive | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  async function removeDeviceFromAccount() {
+    if (!deleteTarget) return;
+    try {
+      const settings = await loadSettings();
+      if (!settings.apiKey) throw new Error('Sign in before transferring a scale to another user.');
+      await deleteCloudHive(settings, deleteTarget.id);
+      const apiaries = await loadApiaries();
+      await hideHive(apiaries, deleteTarget.id);
+      await removeHiveLocal(deleteTarget.id);
+      setToast(`${deleteTarget.name} was removed from this account and can be added by another user.`);
+      await load();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   async function load() {
     // 1) Local cache first — instant, offline-safe.
@@ -123,10 +143,15 @@ const FleetPage: React.FC = () => {
                 return (
                   <div key={h.id} className="oa-card p-3 flex items-center justify-between">
                     <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>{h.name}</span>
-                    <span className="oa-mono text-xs px-2 py-1 rounded-full"
-                      style={{ background: 'var(--oa-surface-1)', color: fw ? 'var(--oa-ink)' : 'var(--oa-ink-subtle)', border: '1px solid var(--oa-glass-border)' }}>
-                      {fw ?? 'unknown'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="oa-mono text-xs px-2 py-1 rounded-full"
+                        style={{ background: 'var(--oa-surface-1)', color: fw ? 'var(--oa-ink)' : 'var(--oa-ink-subtle)', border: '1px solid var(--oa-glass-border)' }}>
+                        {fw ?? 'unknown'}
+                      </span>
+                      <button aria-label={`Remove ${h.name} from this account`} onClick={() => setDeleteTarget(h)}>
+                        <IonIcon icon={trashOutline} style={{ color: 'var(--ion-color-danger)', fontSize: 20 }} />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -134,6 +159,14 @@ const FleetPage: React.FC = () => {
             </div>
           </>
         )}
+        <IonActionSheet isOpen={!!deleteTarget} onDidDismiss={() => setDeleteTarget(null)}
+          header={`Remove ${deleteTarget?.name ?? 'scale'}?`}
+          subHeader="This removes it and its cloud history from your account so another user can add it. The scale's on-device log is not changed."
+          buttons={[
+            { text: 'Remove from this account', role: 'destructive', handler: () => { void removeDeviceFromAccount(); } },
+            { text: 'Cancel', role: 'cancel' },
+          ]} />
+        <IonToast isOpen={!!toast} message={toast ?? ''} duration={5000} onDidDismiss={() => setToast(null)} />
       </IonContent>
     </IonPage>
   );
