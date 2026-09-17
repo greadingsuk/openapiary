@@ -81,6 +81,10 @@ export interface Reading {
   rssi?: number;
 }
 
+export function isDemoHive(hiveId: string): boolean {
+  return hiveId.startsWith('demo-');
+}
+
 function isSuppressedInMemory(hiveId: string, ts: number): boolean {
   const cutoff = memClearMarkers.get(hiveId) ?? 0;
   if (ts <= cutoff) return true;
@@ -260,6 +264,9 @@ export async function insertHistoricalReadings(hiveId: string, rows: Reading[]):
     for (const r of rows) {
       if (isSuppressedInMemory(hiveId, r.ts)) continue;
       if (memReadings.some((m) => m.hive_id === hiveId && m.ts === r.ts)) continue;
+      if (r.packet_id != null && memReadings.some((m) =>
+        m.hive_id === hiveId && m.packet_id === r.packet_id && Math.abs(m.ts - r.ts) <= 5 * 60_000,
+      )) continue;
       memReadings.push({ ...r, hive_id: hiveId, synced: 0 });
       added++;
     }
@@ -271,6 +278,14 @@ export async function insertHistoricalReadings(hiveId: string, rows: Reading[]):
   const set: { statement: string; values: (string | number | null)[] }[] = [];
   for (const r of rows) {
     if (await isSuppressedInDb(hiveId, r.ts)) continue;
+    if (r.packet_id != null) {
+      const nearbyPacket = await db!.query(
+        `SELECT 1 FROM readings
+         WHERE hive_id = ? AND packet_id = ? AND ABS(ts - ?) <= ? LIMIT 1`,
+        [hiveId, r.packet_id, r.ts, 5 * 60_000],
+      );
+      if (nearbyPacket.values?.length) continue;
+    }
     set.push({
       statement: `INSERT OR IGNORE INTO readings
         (hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi, synced)
@@ -456,6 +471,37 @@ export async function getReadingsLocal(hiveId: string, sinceMs = 0): Promise<Rea
   return (res.values ?? []) as Reading[];
 }
 
+/** Copy a real hive and its cached history into a local-only demo hive for UI testing. */
+export async function cloneHiveForDemo(source: Hive, demoId: string, demoName: string): Promise<number> {
+  await initDb();
+  const rows = await getReadingsLocal(source.id);
+  const demoHive: Hive = { id: demoId, name: demoName, created_at: Date.now() };
+  if (useMemory) {
+    memHives.set(demoId, demoHive);
+    for (const row of rows) {
+      if (!memReadings.some((reading) => reading.hive_id === demoId && reading.ts === row.ts)) {
+        memReadings.push({ ...row, hive_id: demoId, synced: 1 });
+      }
+    }
+    return rows.length;
+  }
+
+  await db!.run(
+    `INSERT INTO hives (id, name, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
+    [demoHive.id, demoHive.name, demoHive.created_at],
+  );
+  const set = rows.map((row) => ({
+    statement: `INSERT OR IGNORE INTO readings
+      (hive_id, ts, weight_kg, battery_v, temp_c, packet_id, rssi, synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    values: [demoId, row.ts, row.weight_kg ?? null, row.battery_v ?? null,
+      row.temp_c ?? null, row.packet_id ?? null, row.rssi ?? null],
+  }));
+  if (set.length) await db!.executeSet(set);
+  return set.length;
+}
+
 export async function hiveCount(): Promise<number> {
   await initDb();
   if (useMemory) return memHives.size;
@@ -501,6 +547,48 @@ export async function deleteAllReadings(hiveId: string): Promise<void> {
     return;
   }
   await db!.run('DELETE FROM readings WHERE hive_id = ?', [hiveId]);
+}
+
+/** Remove a hive and its local cache only. It does not call the cloud API. */
+export async function removeHiveLocal(hiveId: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    memHives.delete(hiveId);
+    memSyncState.delete(hiveId);
+    memDeletedReadings.delete(hiveId);
+    memClearMarkers.delete(hiveId);
+    for (let index = memReadings.length - 1; index >= 0; index--) {
+      if (memReadings[index].hive_id === hiveId) memReadings.splice(index, 1);
+    }
+    return;
+  }
+  await db!.execute(
+    `DELETE FROM deleted_readings WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM hive_clear_markers WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM hive_sync WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM readings WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM hives WHERE id = '${hiveId.replace(/'/g, "''")}';`,
+  );
+}
+
+/** Discard one hive's local cache without creating deletion markers or calling cloud APIs. */
+export async function resetHiveCache(hiveId: string): Promise<void> {
+  await initDb();
+  if (useMemory) {
+    memSyncState.delete(hiveId);
+    memDeletedReadings.delete(hiveId);
+    memClearMarkers.delete(hiveId);
+    for (let index = memReadings.length - 1; index >= 0; index--) {
+      if (memReadings[index].hive_id === hiveId) memReadings.splice(index, 1);
+    }
+    return;
+  }
+  await db!.execute(
+    `DELETE FROM deleted_readings WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM hive_clear_markers WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM hive_sync WHERE hive_id = '${hiveId.replace(/'/g, "''")}';
+     DELETE FROM readings WHERE hive_id = '${hiveId.replace(/'/g, "''")}';`,
+  );
 }
 
 /** Wipe all cached hives + readings (used on sign-out so accounts don't bleed). */

@@ -2,7 +2,7 @@
 
 import { loadSettings } from './settings';
 import { postReadings } from './api';
-import { unsyncedByHive, markSynced, unsyncedCount } from './db';
+import { isDemoHive, unsyncedByHive, markSynced, unsyncedCount } from './db';
 
 let syncing = false;
 let timer: number | null = null;
@@ -22,6 +22,7 @@ export async function syncNow(): Promise<SyncResult> {
     if (!s.apiKey || !s.syncEnabled) return result;
     const batches = await unsyncedByHive();
     for (const [hiveId, rows] of batches) {
+      if (isDemoHive(hiveId)) continue;
       result.attempted += rows.length;
       try {
         await postReadings(s, hiveId, hiveId.toUpperCase(), rows.map((r) => ({

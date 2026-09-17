@@ -17,7 +17,7 @@ import { listHivesLocal, latestReadingPerHive, type Hive, type Reading } from '.
 import { loadSettings } from '../lib/settings';
 import { useOnline } from '../lib/useOnline';
 import { freshnessFor, relativeTime } from '../lib/freshness';
-import { loadApiaries, apiaryOf, apiaryNames, type ApiaryStore } from '../lib/apiaries';
+import { isHiveHidden, loadApiaries, apiaryOf, apiaryNames, type ApiaryStore } from '../lib/apiaries';
 import { StatusDot, EmptyState, ErrorState, ListSkeleton } from '../components/ui';
 
 type Sort = 'name' | 'weight' | 'recent';
@@ -28,7 +28,7 @@ const HiveListPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [hives, setHives] = useState<Hive[]>([]);
   const [latest, setLatest] = useState<Map<string, Reading>>(new Map());
-  const [apiaries, setApiaries] = useState<ApiaryStore>({ assign: {}, order: [], meta: {} });
+  const [apiaries, setApiaries] = useState<ApiaryStore>({ assign: {}, order: [], meta: {}, hidden: [] });
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>('name');
   const [sortOpen, setSortOpen] = useState(false);
@@ -87,7 +87,7 @@ const HiveListPage: React.FC = () => {
       loadApiaries(),
       loadDeviceMeta(),
     ]);
-    setHives(localHives);
+    setHives(localHives.filter((hive) => !isHiveHidden(ap, hive.id)));
     setLatest(localLatest);
     setApiaries(ap);
     setDeviceMeta(meta);
@@ -100,7 +100,7 @@ const HiveListPage: React.FC = () => {
         if (cloud.length) {
           const byId = new Map(localHives.map((h) => [h.id, h]));
           for (const c of cloud) byId.set(c.id, { id: c.id, name: c.name, created_at: c.created_at });
-          setHives([...byId.values()]);
+          setHives([...byId.values()].filter((hive) => !isHiveHidden(ap, hive.id)));
         }
       }
     } catch (e) {

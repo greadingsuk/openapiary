@@ -6,11 +6,13 @@ import {
 } from '@ionic/react';
 import {
   cloudUploadOutline, checkmarkCircleOutline, personCircleOutline,
-  logOutOutline, mailOutline,
+  logOutOutline, mailOutline, copyOutline,
 } from 'ionicons/icons';
 import { useEffect, useState } from 'react';
 import { loadSettings, saveSettings, type Settings } from '../lib/settings';
 import { syncNow, unsyncedCount } from '../lib/sync';
+import { cloneHiveForDemo, isDemoHive, listHivesLocal } from '../lib/db';
+import { apiaryOf, loadApiaries, setHiveApiary } from '../lib/apiaries';
 import { useOnline } from '../lib/useOnline';
 import { useAuth, signOut, addCredentials } from '../lib/auth';
 import { APP_VERSION } from '../version';
@@ -58,6 +60,32 @@ const SettingsPage: React.FC = () => {
       setToast('Email & password added — you can now sign in on any device.');
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function createDemoCopy() {
+    if (!s!.apiKey || !s!.syncEnabled) {
+      setToast('Turn on cloud sync and save settings before creating a demo copy.');
+      return;
+    }
+    setSyncing(true);
+    try {
+      const backup = await syncNow();
+      if (backup.failed.length) throw new Error(backup.failed.join('; '));
+      const realHives = (await listHivesLocal()).filter((hive) => !isDemoHive(hive.id));
+      if (realHives.length !== 1) {
+        throw new Error('This tool needs exactly one real scale in this app.');
+      }
+      const source = realHives[0];
+      const demoId = `demo-${source.id}`;
+      const copied = await cloneHiveForDemo(source, demoId, `${source.name} (demo)`);
+      const apiaries = await loadApiaries();
+      await setHiveApiary(demoId, apiaryOf(apiaries, source.id));
+      setToast(`Cloud backup confirmed. Created a local demo scale with ${copied} readings.`);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -166,6 +194,20 @@ const SettingsPage: React.FC = () => {
           {!online && <p className="oa-subtle text-xs mt-2">You're offline — readings will sync automatically when you reconnect.</p>}
           {syncMsg && <p className="oa-muted text-sm mt-2">{syncMsg}</p>}
         </div>
+
+        <IonList inset>
+          <IonListHeader><IonLabel>UI testing</IonLabel></IonListHeader>
+          <IonItem>
+            <IonLabel>
+              <h2>Demo scale</h2>
+              <p className="oa-subtle">Creates a local copy of your one real scale and its history. Demo readings never upload.</p>
+            </IonLabel>
+          </IonItem>
+          <IonItem button detail={false} disabled={syncing} onClick={() => { void createDemoCopy(); }}>
+            <IonIcon slot="start" icon={copyOutline} />
+            <IonLabel>Back up and create demo copy</IonLabel>
+          </IonItem>
+        </IonList>
 
         {/* About */}
         <IonList inset>

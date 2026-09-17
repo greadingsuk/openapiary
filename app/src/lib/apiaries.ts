@@ -21,15 +21,17 @@ export interface ApiaryStore {
   order: string[];
   /** apiary name → metadata */
   meta: Record<string, ApiaryMeta>;
+  /** Hive IDs hidden on this phone after being removed locally. */
+  hidden: string[];
 }
 
 export async function loadApiaries(): Promise<ApiaryStore> {
   const { value } = await Preferences.get({ key: KEY });
-  if (!value) return { assign: {}, order: [], meta: {} };
+  if (!value) return { assign: {}, order: [], meta: {}, hidden: [] };
   try {
     const p = JSON.parse(value);
-    return { assign: p.assign ?? {}, order: p.order ?? [], meta: p.meta ?? {} };
-  } catch { return { assign: {}, order: [], meta: {} }; }
+    return { assign: p.assign ?? {}, order: p.order ?? [], meta: p.meta ?? {}, hidden: p.hidden ?? [] };
+  } catch { return { assign: {}, order: [], meta: {}, hidden: [] }; }
 }
 
 export async function saveApiaries(s: ApiaryStore): Promise<void> {
@@ -48,6 +50,24 @@ export async function setHiveApiary(hiveId: string, apiary: string): Promise<voi
   const s = await loadApiaries();
   s.assign[hiveId] = apiary;
   if (apiary !== UNASSIGNED && !s.order.includes(apiary)) s.order.push(apiary);
+  await saveApiaries(s);
+}
+
+export function isHiveHidden(s: ApiaryStore, hiveId: string): boolean {
+  return s.hidden.includes(hiveId);
+}
+
+/** Hide a scale from this phone without touching its cloud-backed history. */
+export async function hideHive(s: ApiaryStore, hiveId: string): Promise<void> {
+  if (!s.hidden.includes(hiveId)) s.hidden.push(hiveId);
+  delete s.assign[hiveId];
+  await saveApiaries(s);
+}
+
+/** Make a previously removed scale visible again when it is deliberately re-added. */
+export async function unhideHive(hiveId: string): Promise<void> {
+  const s = await loadApiaries();
+  s.hidden = s.hidden.filter((id) => id !== hiveId);
   await saveApiaries(s);
 }
 
