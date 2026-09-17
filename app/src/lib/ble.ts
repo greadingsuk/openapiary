@@ -245,6 +245,9 @@ export async function tareConnected(deviceId: string): Promise<void> {
 
 /** Erase only the scale's stored reading history. Calibration and device setup remain intact. */
 export async function eraseHistoryConnected(deviceId: string): Promise<void> {
+  // An OTA adds this characteristic to an existing service. iOS may retain the
+  // old service list until discovery is explicitly refreshed.
+  await withTimeout(BleClient.discoverServices(deviceId), 8000, 'Refresh scale services');
   await withTimeout(
     BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_ERASE, oneByte(0xa5)),
     8000,
