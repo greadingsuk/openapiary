@@ -21,6 +21,7 @@ import { withContinuePrompts } from '../lib/retryRounds';
 import { loadDeviceMeta, activeHeartbeatSec, fmtHeartbeat } from '../lib/deviceMeta';
 import { hideHive, loadApiaries, apiaryOf, apiaryNames, apiaryMeta, setHiveApiary, upsertApiary } from '../lib/apiaries';
 import { patchHive } from '../lib/api';
+import { connectDevice, disconnectDevice, eraseHistoryConnected, findDeviceId } from '../lib/ble';
 import WeightChart from '../components/WeightChart';
 import TareWizard from '../components/TareWizard';
 import CalibrationWizard from '../components/CalibrationWizard';
@@ -183,15 +184,35 @@ const HiveDetailPage: React.FC = () => {
     setToast('Readings deleted');
   }
 
-  async function deleteAll(scope: 'phone' | 'cloud-and-phone') {
-    if (scope === 'cloud-and-phone') {
+  async function deleteAll(scope: 'phone' | 'cloud' | 'phone-and-cloud' | 'device' | 'phone-and-device' | 'all') {
+    const deletePhone = scope === 'phone' || scope === 'phone-and-cloud' || scope === 'phone-and-device' || scope === 'all';
+    const deleteCloud = scope === 'cloud' || scope === 'phone-and-cloud' || scope === 'all';
+    const deleteDevice = scope === 'device' || scope === 'phone-and-device' || scope === 'all';
+    if (deleteDevice) {
+      const deviceId = await findDeviceId(id.toUpperCase(), 65000);
+      if (!deviceId) throw new Error('Scale not found. Keep the phone within a metre and wait for its next heartbeat.');
+      await connectDevice(deviceId);
+      try {
+        await eraseHistoryConnected(deviceId);
+        await resetSyncState(id);
+      } finally {
+        await disconnectDevice(deviceId);
+      }
+    }
+    if (deleteCloud) {
       const settings = await loadSettings();
       if (!settings.apiKey) throw new Error('Sign in before deleting cloud readings.');
       await deleteCloudReadings(settings, id);
     }
-    await deleteAllReadings(id);
+    if (deletePhone) await deleteAllReadings(id);
+    else if (deleteCloud) await markAllReadingsSynced(id);
     await load();
-    setToast(scope === 'phone' ? 'Phone readings deleted. Cloud and scale history remain.' : 'Cloud and phone readings deleted. The scale log remains.');
+    if (scope === 'device') setToast('Scale history erased. Phone and cloud readings remain.');
+    else if (scope === 'phone') setToast('Phone readings deleted. Cloud and scale history remain.');
+    else if (scope === 'cloud') setToast('Cloud readings deleted. Phone and scale history remain.');
+    else if (scope === 'phone-and-cloud') setToast('Phone and cloud readings deleted. The scale history remains.');
+    else if (scope === 'phone-and-device') setToast('Phone and scale readings deleted. Cloud history remains.');
+    else setToast('Scale, phone, and cloud readings deleted.');
   }
 
   // Pull the scale's on-device log over BLE to backfill gaps passive scanning
@@ -466,14 +487,14 @@ const HiveDetailPage: React.FC = () => {
           message={`Permanently delete ${selected.size} reading${selected.size === 1 ? '' : 's'}? This can't be undone.`}
           buttons={[{ text: 'Cancel', role: 'cancel' }, { text: 'Delete', role: 'destructive', handler: () => { void deleteSelected(); } }]} />
         <IonActionSheet isOpen={showDeleteChoices} onDidDismiss={() => setShowDeleteChoices(false)} header="Delete scale data"
-          subHeader="Phone deletion records a marker, so old readings on the scale cannot automatically re-upload. Erasing the scale log requires a forthcoming firmware update."
+          subHeader="Choose exactly where to remove readings. Scale deletion requires firmware v1.2.1 or later and cannot be undone."
           buttons={[
             { text: 'Delete from this phone only', role: 'destructive', handler: () => { void deleteAll('phone'); } },
-            { text: 'Delete from cloud and this phone', role: 'destructive', handler: () => { void deleteAll('cloud-and-phone'); } },
-            { text: 'Delete from cloud only', role: 'destructive', handler: () => { void (async () => { const settings = await loadSettings(); if (!settings.apiKey) throw new Error('Sign in before deleting cloud readings.'); await deleteCloudReadings(settings, id); await markAllReadingsSynced(id); setToast('Cloud readings deleted. Phone and scale history are retained.'); })().catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
-            { text: 'Delete from scale only (firmware update required)', disabled: true },
-            { text: 'Delete from phone and scale (firmware update required)', disabled: true },
-            { text: 'Delete from phone, scale, and cloud (firmware update required)', disabled: true },
+            { text: 'Delete from cloud only', role: 'destructive', handler: () => { void deleteAll('cloud').catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
+            { text: 'Delete from phone and cloud', role: 'destructive', handler: () => { void deleteAll('phone-and-cloud').catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
+            { text: 'Delete from scale only', role: 'destructive', handler: () => { void deleteAll('device').catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
+            { text: 'Delete from phone and scale', role: 'destructive', handler: () => { void deleteAll('phone-and-device').catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
+            { text: 'Delete from phone, scale, and cloud', role: 'destructive', handler: () => { void deleteAll('all').catch((error) => setToast(error instanceof Error ? error.message : String(error))); } },
             { text: 'Cancel', role: 'cancel' },
           ]} />
       </IonContent>

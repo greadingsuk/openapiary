@@ -218,6 +218,14 @@ struct RingLog {
         f.close();
         return got == recSize;
     }
+
+    /** Permanently discard this ring's records and reset its stream cursor. */
+    void clear() {
+        InternalFS.remove(dataPath);
+        InternalFS.remove(metaPath);
+        nextSeq = 1;
+        nAnchors = 0;
+    }
 };
 
 // The two logs. Defined here (header-only project) as inline singletons.
@@ -287,6 +295,13 @@ inline void logDiag(float weightKg, float tempC, uint16_t spreadG, float battV,
         bt,
     };
     diagLog().append(rec, epoch, intervalSec);
+}
+
+/** Permanently erase locally stored measurement, battery, and diagnostic logs. */
+inline void clearHistory() {
+    weightLog().clear();
+    batteryLog().clear();
+    diagLog().clear();
 }
 
 // --- Time anchor across reboots -------------------------------------------

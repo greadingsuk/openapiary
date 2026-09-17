@@ -61,6 +61,12 @@ static uint8_t UUID_INTERVAL[16] = {
 static uint8_t UUID_DEBUG[16] = {
     0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x0a,0x00,0x00,0x0a
 };
+// History erase (0a...0b, write/read 1 byte): write 0xA5 to erase logs;
+// then read 0x01 as the acknowledgement. This deliberately does not change
+// calibration, tare, device name, or time settings.
+static uint8_t UUID_HERASE[16] = {
+    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0xb0,0x00,0x40,0x51,0x0a,0x0b,0x00,0x00,0x0a
+};
 
 inline BLEService&        service()  { static BLEService s(UUID_SERVICE);        return s; }
 inline BLECharacteristic& nameChar() { static BLECharacteristic c(UUID_NAME);    return c; }
@@ -72,6 +78,7 @@ inline BLECharacteristic& histCtrlChar(){ static BLECharacteristic c(UUID_HCTRL)
 inline BLECharacteristic& histDataChar(){ static BLECharacteristic c(UUID_HDATA); return c; }
 inline BLECharacteristic& intervalChar(){ static BLECharacteristic c(UUID_INTERVAL); return c; }
 inline BLECharacteristic& debugChar()   { static BLECharacteristic c(UUID_DEBUG);    return c; }
+inline BLECharacteristic& historyEraseChar() { static BLECharacteristic c(UUID_HERASE); return c; }
 
 // RAM time seed: epoch at the moment we were told, plus the millis() snapshot.
 static volatile bool     g_haveTime  = false;
@@ -270,6 +277,15 @@ inline void onDebugWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* dat
     (void)chr;
 }
 
+inline void onHistoryEraseWrite(uint16_t /*conn*/, BLECharacteristic* chr, uint8_t* data, uint16_t len) {
+    uint8_t status = 0;
+    if (len >= 1 && data[0] == 0xA5) {
+        OALog::clearHistory();
+        status = 1;
+    }
+    chr->write(&status, 1);
+}
+
 // Register the service + characteristics. Call after Bluefruit.begin().
 inline void begin(OAPersist::State* state) {
     g_state = state;
@@ -332,6 +348,14 @@ inline void begin(OAPersist::State* state) {
     debugChar().setWriteCallback(onDebugWrite);
     debugChar().begin();
     debugChar().write(&g_state->debugLog, 1);
+
+    historyEraseChar().setProperties(CHR_PROPS_READ | CHR_PROPS_WRITE);
+    historyEraseChar().setPermission(SECMODE_OPEN, SECMODE_OPEN);
+    historyEraseChar().setFixedLen(1);
+    historyEraseChar().setWriteCallback(onHistoryEraseWrite);
+    historyEraseChar().begin();
+    uint8_t eraseStatus = 0;
+    historyEraseChar().write(&eraseStatus, 1);
 }
 
 // Returns true (and clears the flag) if a write needs flushing to flash.

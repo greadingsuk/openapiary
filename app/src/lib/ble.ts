@@ -126,6 +126,7 @@ export const OA_CHAR_HIST_CTRL = '0a000007-0a51-4000-b000-000000000001'; // 5 by
 export const OA_CHAR_HIST_DATA = '0a000008-0a51-4000-b000-000000000001'; // notify: fixed records then a 1-byte 0x00 terminator
 export const OA_CHAR_INTERVAL  = '0a000009-0a51-4000-b000-000000000001'; // r/w 8 bytes: summerHb,summerRd,winterHb,winterRd u16 LE (seconds)
 export const OA_CHAR_DEBUG     = '0a00000a-0a51-4000-b000-000000000001'; // r/w 1 byte: test (diagnostic) logging enable
+export const OA_CHAR_HIST_ERASE = '0a00000b-0a51-4000-b000-000000000001'; // write 0xA5, read 0x01 to confirm history erase
 
 export interface OADiagnostics {
   weightKg: number;
@@ -240,6 +241,21 @@ export async function tareConnected(deviceId: string): Promise<void> {
     8000,
     'Write tare command',
   );
+}
+
+/** Erase only the scale's stored reading history. Calibration and device setup remain intact. */
+export async function eraseHistoryConnected(deviceId: string): Promise<void> {
+  await withTimeout(
+    BleClient.write(deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_ERASE, oneByte(0xa5)),
+    8000,
+    'Erase scale history',
+  );
+  const status = await withTimeout(
+    BleClient.read(deviceId, OA_CONFIG_SERVICE, OA_CHAR_HIST_ERASE),
+    8000,
+    'Confirm scale history erase',
+  );
+  if (toBytes(status)[0] !== 1) throw new Error('Scale did not confirm its history was erased.');
 }
 
 /** Push the current time on an already-open connection, without touching the
