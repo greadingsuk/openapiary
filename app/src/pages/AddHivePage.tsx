@@ -197,7 +197,7 @@ const AddHivePage: React.FC = () => {
         <div className="px-4 py-4 flex flex-col gap-4">
           {step === 'find' && (
             <>
-              <div className="oa-card p-6 flex flex-col items-center text-center gap-4">
+              <div className="oa-card p-6 flex flex-col items-center text-center gap-4 mx-1">
                 <div className="relative flex items-center justify-center" style={{ width: 104, height: 104 }}>
                   {scanning && (
                     <>
@@ -209,8 +209,8 @@ const AddHivePage: React.FC = () => {
                     <IonIcon icon={bluetoothOutline} style={{ fontSize: 34, color: scanning ? 'var(--oa-honey-500)' : 'var(--oa-honey-400)' }} />
                   </div>
                 </div>
-                <p className="text-sm oa-muted min-h-[1.25rem] max-w-[18rem]">
-                  {status ?? 'Bring your phone close to the scale, then scan for nearby devices.'}
+                <p className="text-sm oa-muted min-h-[2.5rem] max-w-[19rem]">
+                  {status ?? 'Keep your phone within one metre. The scale broadcasts briefly about once a minute, so finding it can take up to 60 seconds.'}
                 </p>
                 <IonButton expand="block" onClick={toggleScan} color={scanning ? 'medium' : 'primary'} className="w-full" disabled={busy}>
                   <IonIcon slot="start" icon={scanning ? stopCircleOutline : bluetoothOutline} />
@@ -223,7 +223,7 @@ const AddHivePage: React.FC = () => {
               {adverts.length > 0 && (
                 <div className="flex flex-col gap-3 pb-4">
                   <div className="px-1 pt-1">
-                    <h2 className="oa-section text-base" style={{ color: 'var(--oa-ink)' }}>Found {adverts.length} {adverts.length === 1 ? 'scale' : 'scales'}</h2>
+                    <h2 className="oa-section text-base" style={{ color: 'var(--oa-ink)' }}>Nearby scale{adverts.length === 1 ? '' : 's'}</h2>
                   </div>
                   {adverts.map((a) => {
                     const f = freshnessFor(a.ts, now);
@@ -271,10 +271,10 @@ const AddHivePage: React.FC = () => {
           {step === 'name' && selectedDevice && (
             <div className="oa-card p-5 flex flex-col gap-4">
               <h2 className="text-xl font-bold" style={{ color: 'var(--oa-ink)' }}>Name this scale</h2>
-              <p className="text-sm oa-muted">The device name is a useful starting point, but you should give it a friendly name you will recognise in the app.</p>
+              <p className="text-sm oa-muted">Choose the name you want to see every day, such as “Home hive” or “Orchard scale”. Tap the name below to replace the suggested name.</p>
               <IonItem lines="full">
-                <IonLabel position="stacked">Scale name</IonLabel>
-                <IonInput value={friendlyName} maxlength={30} onIonInput={(e) => setFriendlyName(String(e.detail.value ?? ''))} placeholder="North apiary scale" />
+                <IonLabel position="stacked">Your scale name</IonLabel>
+                <IonInput value={friendlyName} maxlength={30} clearInput onIonInput={(e) => setFriendlyName(String(e.detail.value ?? ''))} placeholder="e.g. Home hive scale" />
               </IonItem>
               <div className="rounded-xl p-3 text-xs oa-muted" style={{ background: 'var(--oa-surface-1)', border: '1px solid var(--oa-glass-border)' }}>
                 Device ID: <strong>{selectedDevice.deviceName}</strong>
@@ -376,8 +376,8 @@ const AddHivePage: React.FC = () => {
             })();
           }}
         />
-        <TareWizard isOpen={showTare} deviceName={selectedDevice?.deviceName ?? ''} onClose={() => setShowTare(false)} onTared={() => setTareDone(true)} />
-        <CalibrationWizard isOpen={showCalibration} deviceName={selectedDevice?.deviceName ?? ''} onClose={() => { setShowCalibration(false); setKgCheck(1); setCheckMessage('Accuracy check completed.'); }} />
+        <TareWizard isOpen={showTare} deviceName={selectedDevice?.deviceName ?? ''} displayName={friendlyName} onClose={() => setShowTare(false)} onTared={() => setTareDone(true)} />
+        <CalibrationWizard isOpen={showCalibration} deviceName={selectedDevice?.deviceName ?? ''} displayName={friendlyName} onClose={() => { setShowCalibration(false); setKgCheck(1); setCheckMessage('Accuracy check completed.'); }} />
         <IonModal isOpen={showPrivacyTerms} onDidDismiss={() => setShowPrivacyTerms(false)} initialBreakpoint={0.8} breakpoints={[0, 0.8, 1]}>
           <IonHeader><IonToolbar><IonTitle>Sync and privacy terms</IonTitle><IonButtons slot="end"><IonButton onClick={() => setShowPrivacyTerms(false)}>Close</IonButton></IonButtons></IonToolbar></IonHeader>
           <IonContent className="ion-padding"><div className="flex flex-col gap-4 text-sm oa-muted"><p>Cloud sync backs up your readings to your Open Apiary account. You can remove them from the cloud later.</p><p>With consent, Open Apiary may use anonymised, aggregated readings with apiary-level location to study conditions across the UK. Individual identities, exact addresses, and raw account details are not shown in public views.</p><p>Turning cloud sync off keeps future readings on this phone and scale only. The scale continues to record normally.</p></div></IonContent>

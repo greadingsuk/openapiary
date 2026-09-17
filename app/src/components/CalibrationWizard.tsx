@@ -31,10 +31,12 @@ const TOLERANCE_KG = 0.1; // ±100 g
 interface Props {
   isOpen: boolean;
   deviceName: string;
+  displayName?: string;
   onClose: () => void;
 }
 
-const CalibrationWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => {
+const CalibrationWizard: React.FC<Props> = ({ isOpen, deviceName, displayName, onClose }) => {
+  const scaleLabel = displayName || deviceName;
   const [mode, setMode] = useState<Mode>('empty');
   const [step, setStep] = useState<Step>('prepare');
   const [knownKg, setKnownKg] = useState(1.0);
@@ -141,7 +143,7 @@ const CalibrationWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => 
     <IonModal isOpen={isOpen} onDidDismiss={close} initialBreakpoint={1} breakpoints={[0, 1]}>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Calibrate {deviceName}</IonTitle>
+          <IonTitle>Calibrate {scaleLabel}</IonTitle>
           <IonButtons slot="end"><IonButton onClick={close}>Close</IonButton></IonButtons>
         </IonToolbar>
       </IonHeader>
@@ -173,7 +175,7 @@ const CalibrationWizard: React.FC<Props> = ({ isOpen, deviceName, onClose }) => 
         {step === 'connecting' && (
           <div className="flex flex-col items-center gap-3 text-center py-8">
             <IonSpinner name="dots" />
-            <p className="oa-muted text-sm">Waiting for {deviceName}'s next heartbeat…</p>
+            <p className="oa-muted text-sm">Waiting for {scaleLabel}'s next heartbeat…</p>
             <p className="oa-numeral text-2xl font-semibold" style={{ color: 'var(--oa-ink)' }}>{elapsed}s</p>
             <p className="oa-subtle text-xs">Scales check in about once a minute. Keep the phone close.</p>
           </div>

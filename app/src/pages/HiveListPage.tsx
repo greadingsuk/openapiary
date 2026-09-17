@@ -2,14 +2,12 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonButton, IonIcon, IonButtons, IonFab, IonFabButton,
   IonRefresher, IonRefresherContent, useIonViewWillEnter, useIonRouter,
-  IonActionSheet, IonAlert, IonToast, IonSpinner,
+  IonActionSheet, IonToast, IonSpinner,
 } from '@ionic/react';
-import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline, syncOutline, cloudDownloadOutline } from 'ionicons/icons';
+import { add, settingsOutline, cloudOfflineOutline, batteryHalfOutline, swapVerticalOutline, syncOutline } from 'ionicons/icons';
 import { useState } from 'react';
 import { listHives } from '../lib/api';
 import { syncNearbyKnownHives } from '../lib/nearbySync';
-import { syncDeviceHistory } from '../lib/history';
-import { withContinuePrompts } from '../lib/retryRounds';
 import {
   loadDeviceMeta, activeHeartbeatSec, scanWindowMsFor, fmtHeartbeat, type DeviceMetaStore,
 } from '../lib/deviceMeta';
@@ -34,21 +32,7 @@ const HiveListPage: React.FC = () => {
   const [sortOpen, setSortOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [liveSyncingIds, setLiveSyncingIds] = useState<Set<string>>(new Set());
-  const [historySyncingIds, setHistorySyncingIds] = useState<Set<string>>(new Set());
   const [deviceMeta, setDeviceMeta] = useState<DeviceMetaStore>({});
-  const [continuePrompt, setContinuePrompt] = useState<{ message: string; resolve: (v: boolean) => void } | null>(null);
-
-  // Ask whether to keep waiting for another 2-min round, quoting the scale's
-  // real (or assumed-default) heartbeat so the wait isn't a mystery.
-  function askContinue(heartbeatSec: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      setContinuePrompt({
-        message: `Still no sign of the scale after 2 minutes (heartbeat set to ${fmtHeartbeat(heartbeatSec)}). Keep waiting for another 2 minutes?`,
-        resolve,
-      });
-    });
-  }
 
   // Bottom-left FAB: live BLE sweep for the caller's scales, then cloud sync.
   // (Pull-to-refresh only re-reads stored/cloud data — it does not scan.)
@@ -110,53 +94,6 @@ const HiveListPage: React.FC = () => {
 
   useIonViewWillEnter(() => { void load(); });
 
-  // Per-row quick refresh: grabs just this scale's current live advert value
-  // (same mechanism as the fleet-wide FAB scan, scoped to one hive, sized to
-  // its real configured heartbeat so a slower cadence isn't falsely "not heard").
-  async function refreshOneHive(h: Hive) {
-    if (liveSyncingIds.has(h.id)) return;
-    setLiveSyncingIds((s) => new Set(s).add(h.id));
-    try {
-      const scanMs = scanWindowMsFor(activeHeartbeatSec(deviceMeta[h.id]));
-      const r = await syncNearbyKnownHives(scanMs, [h.id]);
-      await load();
-      setToast(r.heard === 0
-        ? `${h.name}: not heard nearby.`
-        : r.stored > 0
-          ? `${h.name}: ${r.stored} new reading${r.stored === 1 ? '' : 's'}.`
-          : `${h.name}: already up to date.`);
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLiveSyncingIds((s) => { const n = new Set(s); n.delete(h.id); return n; });
-    }
-  }
-
-  // Per-row full pull: drains this scale's on-device 15-min log over BLE
-  // (same mechanism as HiveDetailPage's "Sync history from scale"). Runs in
-  // 2-min rounds, checking in with the user between rounds rather than
-  // assuming any fixed total wait is long enough for the configured heartbeat.
-  async function pullHistoryOneHive(h: Hive) {
-    if (historySyncingIds.has(h.id)) return;
-    setHistorySyncingIds((s) => new Set(s).add(h.id));
-    const heartbeatSec = activeHeartbeatSec(deviceMeta[h.id]);
-    try {
-      const res = await withContinuePrompts(
-        () => syncDeviceHistory(h.id, h.name.toUpperCase(), latest.get(h.id)?.battery_v ?? undefined),
-        () => askContinue(heartbeatSec),
-      );
-      if (!res.found) { setToast(`${h.name}: scale not found — keep it within a metre and try again.`); return; }
-      await load();
-      setToast(res.added > 0
-        ? `${h.name}: synced ${res.added} reading${res.added === 1 ? '' : 's'} from the scale.`
-        : `${h.name}: already up to date with the scale.`);
-    } catch (e) {
-      setToast(`${h.name}: history sync failed — ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setHistorySyncingIds((s) => { const n = new Set(s); n.delete(h.id); return n; });
-    }
-  }
-
   const now = Date.now();
 
   function sortHives(list: Hive[]): Hive[] {
@@ -174,8 +111,6 @@ const HiveListPage: React.FC = () => {
   const renderCard = (h: Hive) => {
     const r = latest.get(h.id);
     const f = freshnessFor(r?.ts ?? null, now);
-    const liveBusy = liveSyncingIds.has(h.id);
-    const histBusy = historySyncingIds.has(h.id);
     return (
       <div key={h.id} className="oa-card p-4 flex flex-col gap-3">
         <div
@@ -201,32 +136,6 @@ const HiveListPage: React.FC = () => {
             </span>
             <span className="text-xs oa-muted">kg</span>
           </div>
-        </div>
-        <div className="flex items-center justify-end gap-3 pt-2" style={{ borderTop: '1px solid rgba(20, 22, 26, 0.06)' }}>
-          <button
-            aria-label={`Refresh ${h.name} live reading`}
-            className="flex items-center gap-1.5 px-3 py-2.5 rounded-full active:opacity-70"
-            style={{ minWidth: 44, minHeight: 44, background: 'rgba(20, 22, 26, 0.05)' }}
-            disabled={liveBusy}
-            onClick={(e) => { e.stopPropagation(); void refreshOneHive(h); }}
-          >
-            {liveBusy
-              ? <IonSpinner name="crescent" style={{ width: 20, height: 20 }} />
-              : <IonIcon icon={syncOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 22 }} />}
-            <span className="text-xs oa-muted">Refresh</span>
-          </button>
-          <button
-            aria-label={`Pull full device history for ${h.name}`}
-            className="flex items-center gap-1.5 px-3 py-2.5 rounded-full active:opacity-70"
-            style={{ minWidth: 44, minHeight: 44, background: 'rgba(20, 22, 26, 0.05)' }}
-            disabled={histBusy}
-            onClick={(e) => { e.stopPropagation(); void pullHistoryOneHive(h); }}
-          >
-            {histBusy
-              ? <IonSpinner name="crescent" style={{ width: 20, height: 20 }} />
-              : <IonIcon icon={cloudDownloadOutline} style={{ color: 'var(--oa-ink-subtle)', fontSize: 22 }} />}
-            <span className="text-xs oa-muted">Full sync</span>
-          </button>
         </div>
       </div>
     );
@@ -290,16 +199,6 @@ const HiveListPage: React.FC = () => {
           </IonFabButton>
         </IonFab>
         <IonToast isOpen={!!toast} message={toast ?? ''} duration={4000} onDidDismiss={() => setToast(null)} />
-        <IonAlert
-          isOpen={!!continuePrompt}
-          header="Still waiting"
-          message={continuePrompt?.message}
-          buttons={[
-            { text: 'Stop', role: 'cancel', handler: () => { continuePrompt?.resolve(false); setContinuePrompt(null); } },
-            { text: 'Keep waiting', handler: () => { continuePrompt?.resolve(true); setContinuePrompt(null); } },
-          ]}
-        />
-
         <IonActionSheet
           isOpen={sortOpen}
           onDidDismiss={() => setSortOpen(false)}

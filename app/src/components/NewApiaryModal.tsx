@@ -3,7 +3,7 @@
 // would accept input. Both fields here are always editable.
 import {
   IonModal, IonHeader, IonToolbar, IonTitle, IonButtons, IonButton,
-  IonContent, IonItem, IonLabel, IonInput, IonNote, IonIcon,
+  IonContent, IonItem, IonLabel, IonInput, IonNote, IonIcon, IonCheckbox,
 } from '@ionic/react';
 import { locateOutline } from 'ionicons/icons';
 import { useEffect, useState } from 'react';
@@ -19,6 +19,7 @@ const NewApiaryModal: React.FC<Props> = ({ isOpen, onClose, onCreate }) => {
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
   const [coordinates, setCoordinates] = useState<{ lat: number; lon: number } | null>(null);
+  const [locationConfirmed, setLocationConfirmed] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   // Reset fields each time the modal opens.
@@ -27,12 +28,13 @@ const NewApiaryModal: React.FC<Props> = ({ isOpen, onClose, onCreate }) => {
       setName('');
       setLocation('');
       setCoordinates(null);
+      setLocationConfirmed(false);
       setLocationError(null);
     }
   }, [isOpen]);
 
   const postcodeValid = /^[A-Z]{1,2}\d[A-Z\d]?$/i.test(location.trim().replace(/\s/g, ''));
-  const canSave = name.trim().length > 0 && (postcodeValid || coordinates !== null);
+  const canSave = name.trim().length > 0 && (postcodeValid || (coordinates !== null && locationConfirmed));
 
   function useCurrentLocation() {
     if (!navigator.geolocation) {
@@ -44,6 +46,7 @@ const NewApiaryModal: React.FC<Props> = ({ isOpen, onClose, onCreate }) => {
       ({ coords }) => {
         setCoordinates({ lat: coords.latitude, lon: coords.longitude });
         setLocation(`GPS ${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+        setLocationConfirmed(false);
       },
       () => setLocationError('Could not get your phone location. Enter at least the first half of a postcode, such as CH7.'),
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60_000 },
@@ -84,14 +87,21 @@ const NewApiaryModal: React.FC<Props> = ({ isOpen, onClose, onCreate }) => {
           <IonInput
             value={location}
             placeholder="At least the first half, e.g. CH7"
-            onIonInput={(e) => { setLocation(e.detail.value ?? ''); setCoordinates(null); }}
+            onIonInput={(e) => { setLocation(e.detail.value ?? ''); setCoordinates(null); setLocationConfirmed(false); }}
           />
         </IonItem>
         <IonButton fill="outline" expand="block" className="mt-3" onClick={useCurrentLocation}>
           <IonIcon slot="start" icon={locateOutline} /> Use phone location
         </IonButton>
+        {coordinates && (
+          <IonItem lines="none" className="mt-2">
+            <IonCheckbox checked={locationConfirmed} onIonChange={(event) => setLocationConfirmed(event.detail.checked)}>
+              I am standing at this apiary now
+            </IonCheckbox>
+          </IonItem>
+        )}
         <IonNote className="block mt-2 text-xs" color={locationError || (!postcodeValid && !coordinates) ? 'danger' : 'medium'}>
-          {locationError ?? (coordinates ? 'Phone location captured.' : 'Required: use phone location or enter at least the first half of a postcode.')}
+          {locationError ?? (coordinates ? (locationConfirmed ? 'Phone location confirmed.' : 'Confirm you are at the apiary to use this location.') : 'Required: use phone location or enter at least the first half of a postcode.')}
         </IonNote>
         <IonButton expand="block" className="mt-4" disabled={!canSave} onClick={save}>
           Create apiary

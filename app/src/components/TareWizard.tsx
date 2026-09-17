@@ -19,6 +19,7 @@ type Step = 'prepare' | 'connecting' | 'measure' | 'taring' | 'verify' | 'error'
 interface Props {
   isOpen: boolean;
   deviceName: string;   // e.g. "OA-ABCB"
+  displayName?: string;
   onClose: () => void;
   /** Called with the verified post-tare weight so the hive page can refresh. */
   onTared?: (weightKg: number) => void;
@@ -27,7 +28,8 @@ interface Props {
 const NEAR_ZERO_KG = 0.2;
 const STABLE_SPREAD_G = 120;
 
-const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose, onTared }) => {
+const TareWizard: React.FC<Props> = ({ isOpen, deviceName, displayName, onClose, onTared }) => {
+  const scaleLabel = displayName || deviceName;
   const [step, setStep] = useState<Step>('prepare');
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [diag, setDiag] = useState<OADiagnostics | null>(null);
@@ -135,7 +137,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose, onTared }) =
     <IonModal isOpen={isOpen} onDidDismiss={close} initialBreakpoint={1} breakpoints={[0, 1]}>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Tare {deviceName}</IonTitle>
+          <IonTitle>Tare {scaleLabel}</IonTitle>
           <IonButtons slot="end">
             <IonButton onClick={close}>Close</IonButton>
           </IonButtons>
@@ -162,7 +164,7 @@ const TareWizard: React.FC<Props> = ({ isOpen, deviceName, onClose, onTared }) =
         {step === 'connecting' && (
           <div className="flex flex-col items-center gap-3 text-center py-8">
             <IonSpinner name="dots" />
-            <p className="oa-muted text-sm">Waiting for {deviceName}'s next heartbeat…</p>
+            <p className="oa-muted text-sm">Waiting for {scaleLabel}'s next heartbeat…</p>
             <p className="oa-numeral text-2xl font-semibold" style={{ color: 'var(--oa-ink)' }}>{elapsed}s</p>
             <p className="oa-subtle text-xs">Scales check in about once a minute. Keep the phone close.</p>
           </div>
