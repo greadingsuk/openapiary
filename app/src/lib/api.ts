@@ -117,6 +117,14 @@ export async function getReadings(s: Settings, hiveId: string): Promise<HiveRead
   return j.readings ?? [];
 }
 
+/** Permanently delete a hive's cloud readings. The scale's on-device log is unaffected. */
+export async function deleteCloudReadings(s: Settings, hiveId: string): Promise<void> {
+  const r = await fetch(`${s.apiUrl}/v1/hives/${encodeURIComponent(hiveId)}/readings`, {
+    method: 'DELETE', headers: headers(s),
+  });
+  if (!r.ok) throw new Error(`DELETE readings ${r.status}`);
+}
+
 /** Update a hive's mutable fields (currently the friendly name). */
 export async function patchHive(
   s: Settings,

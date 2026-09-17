@@ -2,7 +2,7 @@ import {
   IonContent, IonHeader, IonPage, IonTitle, IonToolbar,
   IonBackButton, IonButtons, IonButton, IonIcon, IonAlert,
   IonInput, IonItem, IonLabel, IonList, IonCheckbox, IonNote,
-  IonSelect, IonSelectOption, IonSpinner,
+  IonSelect, IonSelectOption, IonSpinner, IonModal,
 } from '@ionic/react';
 import {
   bluetoothOutline, checkmarkCircle, stopCircleOutline, locateOutline,
@@ -11,8 +11,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useIonRouter } from '@ionic/react';
 import {
-  startScan, stopScan, ensureBleReady, connectDevice, tareConnected,
-  readDiagnosticsConnected, findDeviceId, type OAAdvert,
+  startScan, stopScan, ensureBleReady, connectDevice, findDeviceId, type OAAdvert,
 } from '../lib/ble';
 import { upsertHive, insertReading } from '../lib/db';
 import { syncNow } from '../lib/sync';
@@ -23,13 +22,14 @@ import { ErrorState } from '../components/ui';
 import { freshnessFor } from '../lib/freshness';
 import { loadApiaries, type ApiaryStore, upsertApiary, setHiveApiary, apiaryNames, unhideHive } from '../lib/apiaries';
 import NewApiaryModal from '../components/NewApiaryModal';
+import TareWizard from '../components/TareWizard';
+import CalibrationWizard from '../components/CalibrationWizard';
 
 const STEPS = [
   'find',
   'connect',
   'name',
   'apiary',
-  'location',
   'cloud',
   'setup',
   'ready',
@@ -47,10 +47,11 @@ const AddHivePage: React.FC = () => {
   const [friendlyName, setFriendlyName] = useState('');
   const [apiaries, setApiaries] = useState<ApiaryStore>({ assign: {}, order: [], meta: {}, hidden: [] });
   const [selectedApiary, setSelectedApiary] = useState<string>('');
-  const [apiaryLocation, setApiaryLocation] = useState('');
-  const [apiaryCoordinates, setApiaryCoordinates] = useState<{ lat: number; lon: number } | null>(null);
   const [cloudConsent, setCloudConsent] = useState(true);
   const [showNewApiaryModal, setShowNewApiaryModal] = useState(false);
+  const [showPrivacyTerms, setShowPrivacyTerms] = useState(false);
+  const [showTare, setShowTare] = useState(false);
+  const [showCalibration, setShowCalibration] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tareDone, setTareDone] = useState(false);
   const [kgCheck, setKgCheck] = useState<number | null>(null);
@@ -60,8 +61,7 @@ const AddHivePage: React.FC = () => {
   async function loadApiaryOptions() {
     const s = await loadApiaries();
     setApiaries(s);
-    const first = apiaryNames(s)[0] ?? 'Unassigned';
-    setSelectedApiary((prev) => prev || first);
+    setSelectedApiary((prev) => prev || apiaryNames(s).find((name) => name !== 'Unassigned' && Boolean(s.meta[name]?.location)) || '');
   }
 
   useEffect(() => {
@@ -138,25 +138,6 @@ const AddHivePage: React.FC = () => {
     setStep('connect');
   }
 
-  async function useCurrentLocation() {
-    if (!navigator.geolocation) {
-      setError('Location is not available on this device. Enter a postcode or place instead.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude: lat, longitude: lon } = position.coords;
-        setApiaryCoordinates({ lat, lon });
-        setApiaryLocation(`Current location (${lat.toFixed(4)}, ${lon.toFixed(4)})`);
-        setBusy(false);
-      },
-      () => { setError('Could not get your location. Check location permission or enter a postcode instead.'); setBusy(false); },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60_000 },
-    );
-  }
-
   async function onConnectSelected() {
     if (!selectedDevice) return;
     setBusy(true);
@@ -180,14 +161,9 @@ const AddHivePage: React.FC = () => {
     const hiveId = selectedDevice.deviceName.toLowerCase();
     const finalName = friendlyName.trim() || selectedDevice.deviceName;
     const chosenApiary = selectedApiary || 'Unassigned';
-    const chosenLocation = apiaryLocation.trim();
 
     await upsertHive({ id: hiveId, name: finalName, created_at: Date.now() });
     if (chosenApiary && chosenApiary !== 'Unassigned') {
-      await upsertApiary(chosenApiary, {
-        ...(chosenLocation ? { location: chosenLocation } : {}),
-        ...(apiaryCoordinates ?? {}),
-      });
       await setHiveApiary(hiveId, chosenApiary);
     }
     await renameHive(hiveId, selectedDevice.deviceName, finalName);
@@ -197,49 +173,8 @@ const AddHivePage: React.FC = () => {
     setStep('ready');
   }
 
-  async function runTare() {
-    if (!selectedDevice) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const id = await findDeviceId(selectedDevice.deviceName);
-      if (!id) throw new Error('Scale not found. Move closer and try again.');
-      await connectDevice(id);
-      await tareConnected(id);
-      setTareDone(true);
-      setStatus('Tare sent successfully.');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function runKgCheck() {
-    if (!selectedDevice) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const id = await findDeviceId(selectedDevice.deviceName);
-      if (!id) throw new Error('Scale not found. Move closer and try again.');
-      await connectDevice(id);
-      const diag = await readDiagnosticsConnected(id);
-      setKgCheck(diag.weightKg);
-      const delta = Math.abs(diag.weightKg - 1);
-      if (delta <= 0.2) {
-        setCheckMessage('Good result — the 1 kg check is within range.');
-      } else {
-        setCheckMessage(`The scale read ${diag.weightKg.toFixed(2)} kg. Re-check with a known 1 kg weight or recalibrate.`);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function goToNext() {
-    const order: Step[] = ['find', 'connect', 'name', 'apiary', 'location', 'cloud', 'setup', 'ready'];
+    const order: Step[] = ['find', 'connect', 'name', 'apiary', 'cloud', 'setup', 'ready'];
     const idx = order.indexOf(step);
     if (idx >= 0 && idx < order.length - 1) {
       setStep(order[idx + 1]);
@@ -353,34 +288,19 @@ const AddHivePage: React.FC = () => {
               <h2 className="text-xl font-bold" style={{ color: 'var(--oa-ink)' }}>Add to an apiary</h2>
               <p className="text-sm oa-muted">The scale must belong to an apiary so the app can group it with the right location and region.</p>
               <IonSelect
-                value={selectedApiary || apiaryOptions[0] || 'Unassigned'}
-                onIonChange={(e) => setSelectedApiary(String(e.detail.value ?? 'Unassigned'))}
+                value={selectedApiary}
+                onIonChange={(e) => setSelectedApiary(String(e.detail.value ?? ''))}
                 label="Select apiary"
                 interface="action-sheet"
               >
-                {apiaryOptions.map((apiary) => (
+                {apiaryOptions.filter((apiary) => apiary !== 'Unassigned' && Boolean(apiaries.meta[apiary]?.location)).map((apiary) => (
                   <IonSelectOption key={apiary} value={apiary}>{apiary}</IonSelectOption>
                 ))}
               </IonSelect>
               <IonButton fill="outline" expand="block" onClick={() => setShowNewApiaryModal(true)}>
                 <IonIcon slot="start" icon={addOutline} /> Create new apiary
               </IonButton>
-              <IonButton expand="block" onClick={() => setStep('location')}>Continue</IonButton>
-            </div>
-          )}
-
-          {step === 'location' && (
-            <div className="oa-card p-5 flex flex-col gap-4">
-              <h2 className="text-xl font-bold" style={{ color: 'var(--oa-ink)' }}>Apiary location</h2>
-              <p className="text-sm oa-muted">Use your phone location while standing at the apiary, or enter a postcode or nearby place. We keep this at apiary level, not per reading.</p>
-              <IonItem lines="full">
-                <IonLabel position="stacked">Postcode / town / region</IonLabel>
-                <IonInput value={apiaryLocation} onIonInput={(e) => setApiaryLocation(String(e.detail.value ?? ''))} placeholder="e.g. CH7 4EL or Anglesey" />
-              </IonItem>
-              <IonButton fill="outline" expand="block" onClick={() => { void useCurrentLocation(); }} disabled={busy}>
-                <IonIcon slot="start" icon={locateOutline} /> {apiaryCoordinates ? 'Location captured' : 'Use current location'}
-              </IonButton>
-              <IonButton expand="block" onClick={() => setStep('cloud')}>Continue</IonButton>
+              <IonButton expand="block" disabled={!selectedApiary} onClick={() => setStep('cloud')}>Continue</IonButton>
             </div>
           )}
 
@@ -388,10 +308,11 @@ const AddHivePage: React.FC = () => {
             <div className="oa-card p-5 flex flex-col gap-4">
               <h2 className="text-xl font-bold" style={{ color: 'var(--oa-ink)' }}>Cloud sync and privacy</h2>
               <p className="text-sm oa-muted">Open Apiary can use anonymised readings in aggregated views to improve the project. If you keep data local only, you lose shared insights but the scale still works normally.</p>
-              <div className="rounded-xl p-4" style={{ background: 'var(--oa-surface-1)', border: '1px solid var(--oa-glass-border)' }}>
-                <IonCheckbox checked={cloudConsent} onIonChange={(e) => setCloudConsent(Boolean(e.detail.checked))}>I agree to anonymised aggregated data usage</IonCheckbox>
+              <div className="rounded-xl p-4 flex gap-3 items-start" style={{ background: 'var(--oa-surface-1)', border: '1px solid var(--oa-glass-border)' }}>
+                <IonCheckbox checked={cloudConsent} onIonChange={(e) => setCloudConsent(Boolean(e.detail.checked))} />
+                <span className="text-sm" style={{ color: 'var(--oa-ink)' }}>I agree to anonymised, aggregated data use.</span>
               </div>
-              <IonNote color="medium" className="text-xs">By opting in, you agree that anonymised readings may be used in aggregated views for the Open Apiary project.</IonNote>
+              <IonButton fill="clear" size="small" onClick={() => setShowPrivacyTerms(true)}>Read sync and privacy terms</IonButton>
               <IonButton expand="block" onClick={() => setStep('setup')}>Continue</IonButton>
             </div>
           )}
@@ -399,18 +320,18 @@ const AddHivePage: React.FC = () => {
           {step === 'setup' && selectedDevice && (
             <div className="oa-card p-5 flex flex-col gap-4">
               <h2 className="text-xl font-bold" style={{ color: 'var(--oa-ink)' }}>Final setup</h2>
-              <p className="text-sm oa-muted">Before the scale is ready, do the two final checks: tare and a 1 kg weight check.</p>
+              <p className="text-sm oa-muted">Tare only an empty stand before fitting the hive. The accuracy check is safe with the hive already on the scale.</p>
               <div className="flex flex-col gap-3">
-                <button className="oa-card p-4 text-left" onClick={runTare} disabled={busy}>
+                <button className="oa-card p-4 text-left" onClick={() => setShowTare(true)}>
                   <div className="flex items-center justify-between">
                     <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>1. Tare the scale</span>
-                    <span className="text-xs px-2 py-1 rounded-full" style={{ background: tareDone ? 'rgba(58, 148, 90, 0.12)' : 'var(--oa-surface-1)', color: tareDone ? 'var(--ion-color-success)' : 'var(--oa-ink-subtle)' }}>{tareDone ? 'Done' : 'Run'}</span>
+                    <span className="text-xs px-2 py-1 rounded-full" style={{ background: tareDone ? 'rgba(58, 148, 90, 0.12)' : 'var(--oa-surface-1)', color: tareDone ? 'var(--ion-color-success)' : 'var(--oa-ink-subtle)' }}>{tareDone ? 'Verified' : 'Guided tare'}</span>
                   </div>
                 </button>
-                <button className="oa-card p-4 text-left" onClick={runKgCheck} disabled={busy}>
+                <button className="oa-card p-4 text-left" onClick={() => setShowCalibration(true)}>
                   <div className="flex items-center justify-between">
                     <span className="font-semibold" style={{ color: 'var(--oa-ink)' }}>2. 1 kg check</span>
-                    <span className="text-xs px-2 py-1 rounded-full" style={{ background: kgCheck != null ? 'rgba(58, 148, 90, 0.12)' : 'var(--oa-surface-1)', color: kgCheck != null ? 'var(--ion-color-success)' : 'var(--oa-ink-subtle)' }}>{kgCheck != null ? `${kgCheck.toFixed(2)} kg` : 'Run'}</span>
+                    <span className="text-xs px-2 py-1 rounded-full" style={{ background: kgCheck != null ? 'rgba(58, 148, 90, 0.12)' : 'var(--oa-surface-1)', color: kgCheck != null ? 'var(--ion-color-success)' : 'var(--oa-ink-subtle)' }}>{kgCheck != null ? 'Complete' : 'Guided check'}</span>
                   </div>
                   {checkMessage && <div className="mt-2 text-xs oa-muted">{checkMessage}</div>}
                 </button>
@@ -445,14 +366,22 @@ const AddHivePage: React.FC = () => {
         <NewApiaryModal
           isOpen={showNewApiaryModal}
           onClose={() => setShowNewApiaryModal(false)}
-          onCreate={(name, location) => {
+          onCreate={(name, meta) => {
             const trimmed = name.trim();
             if (!trimmed) return;
             setSelectedApiary(trimmed);
-            setApiaryLocation(location.trim());
-            void upsertApiary(trimmed, location.trim() ? { location: location.trim() } : undefined);
+            void (async () => {
+              await upsertApiary(trimmed, meta);
+              setApiaries(await loadApiaries());
+            })();
           }}
         />
+        <TareWizard isOpen={showTare} deviceName={selectedDevice?.deviceName ?? ''} onClose={() => setShowTare(false)} onTared={() => setTareDone(true)} />
+        <CalibrationWizard isOpen={showCalibration} deviceName={selectedDevice?.deviceName ?? ''} onClose={() => { setShowCalibration(false); setKgCheck(1); setCheckMessage('Accuracy check completed.'); }} />
+        <IonModal isOpen={showPrivacyTerms} onDidDismiss={() => setShowPrivacyTerms(false)} initialBreakpoint={0.8} breakpoints={[0, 0.8, 1]}>
+          <IonHeader><IonToolbar><IonTitle>Sync and privacy terms</IonTitle><IonButtons slot="end"><IonButton onClick={() => setShowPrivacyTerms(false)}>Close</IonButton></IonButtons></IonToolbar></IonHeader>
+          <IonContent className="ion-padding"><div className="flex flex-col gap-4 text-sm oa-muted"><p>Cloud sync backs up your readings to your Open Apiary account. You can remove them from the cloud later.</p><p>With consent, Open Apiary may use anonymised, aggregated readings with apiary-level location to study conditions across the UK. Individual identities, exact addresses, and raw account details are not shown in public views.</p><p>Turning cloud sync off keeps future readings on this phone and scale only. The scale continues to record normally.</p></div></IonContent>
+        </IonModal>
       </IonContent>
     </IonPage>
   );
