@@ -4,10 +4,11 @@ These rules apply to any AI agent/session working in this repository.
 
 ## Build & commit workflow (IMPORTANT)
 
-1. **Ask before building.** Do NOT run an app build (`npm run build`) or a
-   firmware build/flash (`pio run` / `-t upload`) on your own. First ask the
-   user, because there may be several changes to batch before a build. Wait for
-   their go-ahead.
+1. **iPhone-test requests approve the release path.** When the user asks to
+  test a change on an iPhone, run the app build (`npm run build`), then commit
+  and push the validated app changes to `origin/main` without asking again.
+  For unrelated app builds or any firmware build/flash (`pio run` / `-t upload`),
+  still ask first so work can be batched.
 2. **Commit AND PUSH at the build point.** iOS builds run on a *separate Mac*
    via `app/build-ios.sh`, which **`git pull`s `origin/main`** before it builds.
    So a change only reaches a build once it is committed **and pushed** — an
