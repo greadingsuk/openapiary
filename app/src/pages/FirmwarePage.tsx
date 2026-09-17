@@ -13,7 +13,7 @@ import { Capacitor } from '@capacitor/core';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 import { latestFirmware, updateFirmware, type FirmwareInfo } from '../lib/ota';
 import { readAdvertOnce } from '../lib/ble';
-import { latestReading, resetSyncState } from '../lib/db';
+import { latestReading, listHivesLocal, resetSyncState } from '../lib/db';
 import { loadDeviceMeta, recordDeviceMeta } from '../lib/deviceMeta';
 
 const normVer = (v: string) => v.trim().toLowerCase().replace(/^v/, '');
@@ -47,6 +47,7 @@ type Result =
 const FirmwarePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const deviceName = id.toUpperCase();
+  const [scaleName, setScaleName] = useState(deviceName);
   const [latest, setLatest] = useState<FirmwareInfo | null>(null);
   const [installed, setInstalled] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
@@ -62,6 +63,9 @@ const FirmwarePage: React.FC = () => {
     setLoadError(null);
     setChecking(true);
     setResult(null);
+    void listHivesLocal().then((hives) => {
+      setScaleName(hives.find((hive) => hive.id === id)?.name ?? deviceName);
+    }).catch(() => undefined);
     void latestFirmware().then(setLatest).catch((e) =>
       setLoadError(e instanceof Error ? e.message : String(e)),
     );
@@ -92,6 +96,9 @@ const FirmwarePage: React.FC = () => {
   const batteryKnown = batteryV != null;
   const batteryTooLow = batteryKnown && batteryV < OTA_MIN_BATTERY_V;
   const canStartUpdate = !!latest?.zip && !busy && !batteryTooLow;
+  const statusLabel = busy
+    ? phaseLabel(phase || 'Waiting for scale')
+    : installed ?? (checking ? 'Checking nearby' : 'Version not confirmed');
 
   async function run() {
     if (!latest) return;
@@ -134,13 +141,14 @@ const FirmwarePage: React.FC = () => {
           {/* Status hero */}
           <div className="oa-card p-5 flex flex-col items-center gap-2">
             <IonIcon icon={hardwareChipOutline} style={{ fontSize: 40, color: 'var(--oa-honey-600)' }} />
-            <span className="text-sm oa-muted">Your hive scale ({deviceName})</span>
+            <span className="text-sm oa-muted">{scaleName}</span>
+            {scaleName !== deviceName && <span className="text-xs oa-subtle">Scale ID: {deviceName}</span>}
             <span className="oa-numeral text-2xl font-bold" style={{ color: 'var(--oa-ink)' }}>
-              {installed ?? (checking ? 'Checking…' : 'Not heard yet')}
+              {statusLabel}
             </span>
-            {!versionKnown && !checking && (
+            {!busy && !versionKnown && !checking && (
               <span className="text-xs oa-subtle text-center">
-                We couldn't hear the scale. Bring the phone close and reopen this screen.
+                Its software version was not confirmed in the quick check. You can still start the update; keep the phone close while it waits for the next broadcast.
               </span>
             )}
           </div>
